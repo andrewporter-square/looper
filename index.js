@@ -165,27 +165,88 @@ COMMON ESLINT RULES IN THIS REPO:
 
 FIXING @afterpay/i18n-only-static-keys (CRITICAL — follow this process exactly):
 DO NOT use eslint-disable or eslint-disable-next-line for this rule. It is NOT allowed and will be rejected.
-When you see a dynamic i18n key like: t(\`some:prefix:\${SomeEnum[value] ?? 'fallback'}\`)
-1. FIND the enum/object/type being used to construct the key (e.g., LoginIdentityErrors, SomeEnum).
-   - Use read_file or run_command (grep -r "LoginIdentityErrors" --include="*.ts" --include="*.tsx" -l) to locate the definition.
-2. READ the definition to discover ALL possible values.
-3. REPLACE the dynamic expression with a static mapping that enumerates every possible key:
-   Example fix pattern:
-   \`\`\`
-   // BEFORE (dynamic — fails lint):
-   t(\`login:error:\${LoginIdentityErrors[code] ?? 'unknown'}\`)
-   
-   // AFTER (static — passes lint):
-   const loginErrorMessages: Record<string, string> = {
-     invalid_credentials: t('login:error:invalid_credentials'),
-     account_locked: t('login:error:account_locked'),
-     // ... every value from the enum
-   };
-   loginErrorMessages[LoginIdentityErrors[code]] ?? t('login:error:unknown')
-   \`\`\`
-4. VERIFY that every enum value has a corresponding static t() call.
-5. This applies to ANY dynamic key construction: template literals, string concatenation, or variable keys.
-   The rule requires the ENTIRE key string to be a literal — no variables, no expressions, no template parts.
+
+HOW THE LINT RULE WORKS:
+The rule checks that the first argument to t() is a static string literal (or concatenation of only string literals with +).
+It REJECTS: template literals with expressions, variables, ternaries as arguments, function return values.
+String concatenation with + of ONLY string literals IS allowed (but prefer plain string literals).
+
+KNOWN DYNAMIC KEY PATTERNS (classify the violation first, then apply the matching fix strategy):
+
+Pattern A — Template literal with enum/finite variable:
+  Example: t(\`paymentMethod:cardType.\${feature}\`) where feature is Feature.PBI | Feature.PCL | Feature.AFF
+  Fix: Switch on the enum value and call t() with each static key directly.
+
+Pattern B — Template literal with error code enum:
+  Example: t(\`terminalError:\${errorKey}.description\`) where errorKey comes from TerminalErrorCode enum
+  Fix: Build a Record<EnumValue, string> mapping each enum value to its translated string via static t() calls.
+  For large enums (40+ values like TerminalErrorCode), a typed Record map is the cleanest approach.
+
+Pattern C — Ternary selecting between two static keys:
+  Example: t(condition ? 'key.a' : 'key.b')
+  Fix: Move t() outside: condition ? t('key.a') : t('key.b')
+  This is the simplest pattern — just split the t() call.
+
+Pattern D — Fallback array from useGetLocaleWithFallback:
+  Key file: apps/checkout/src/utils/post-checkout.tsx
+  Example: t(localeWithFallback('subtitle'), '', { merchantDisplayName })
+  Fix: Refactor the hook to return static keys, or enumerate all assetId × variant × flow combinations.
+  This is the HARDEST pattern. Read the hook implementation first to understand the key space.
+
+Pattern E — Template literal with buildTranslationKey output:
+  Key file: apps/checkout/src/utils/locales.ts
+  Example: t(buildTranslationKey({ namespace: 'summary', segments: ['autopay', modelSegment] }))
+  Fix: Enumerate all possible outputs from the segment conditions, then use conditional t() calls.
+  Each call site's conditions are deterministic — trace them to find the finite set of keys.
+
+Pattern F — Function parameter/return value as key:
+  Example: t(getLocaleKeyFromDayNumber(day)) where the function returns 'preferredDay.weekday.0' through '.6'
+  Fix: Inline the switch/conditional and call t() with each static key directly.
+  Or: refactor the helper to accept t and return the translated string instead of the key.
+
+STYLE GUIDE FOR FIXES (follow these principles):
+- Prefer declarative Record/Map objects over condition-heavy if/else chains.
+- Include the t() calls INSIDE the declarative mapping so keys remain static string literals.
+- NO nested ternaries. Ever. Use if/else, switch, or a lookup map instead.
+- Keep control flow simple and linear. Compute the "selected config" first, then use it.
+- Separate decision logic from rendering/execution.
+- Favor clarity over cleverness — repetition is acceptable when it improves readability.
+- Use explicit TypeScript types at boundaries (Record<SomeEnum, string>, etc.).
+- Centralize variation points — put all variant/mode/state differences in one place.
+
+EXAMPLE FIX (declarative mapping style):
+\`\`\`
+// BEFORE (dynamic — fails lint):
+t(\`login:error:\${LoginIdentityErrors[code] ?? 'unknown'}\`)
+
+// AFTER (declarative mapping — passes lint):
+const loginErrorMessages: Record<string, string> = {
+  emailNotValid: t('login:error:emailNotValid'),
+  registrationNotPermitted: t('login:error:registrationNotPermitted'),
+};
+const errorMessage = loginErrorMessages[LoginIdentityErrors[code]] ?? t('login:error:unknown');
+\`\`\`
+
+ANOTHER EXAMPLE (ternary split):
+\`\`\`
+// BEFORE (ternary as argument — fails lint):
+t(isExperiment ? 'consumerLending:autopay.name' : 'summary:autopay.name', opts)
+
+// AFTER (t() on each branch — passes lint):
+isExperiment ? t('consumerLending:autopay.name', opts) : t('summary:autopay.name', opts)
+\`\`\`
+
+KEY ARCHITECTURE KNOWLEDGE:
+- apps/checkout/src/utils/convergence.tsx: Wraps next-i18next for Cash/AP cohorts. NOT the blocker — static extraction depends on callsites.
+- apps/checkout/src/utils/locales.ts: buildTranslationKey() builds keys from conditional segments. Each call site has a FINITE set of outputs.
+- apps/checkout/src/utils/post-checkout.tsx: useGetLocaleWithFallback() creates dynamic fallback arrays. Hardest migration area.
+- Locale files are in apps/checkout/public/locales/en-AU/*.json (summary.json, terminalError.json, paymentMethod.json, etc.)
+
+RESEARCH AND VERIFY:
+1. ALWAYS read the enum/type/object definition before creating the mapping.
+2. ALWAYS check the locale JSON file to confirm the static keys actually exist.
+3. If the file uses buildTranslationKey or useGetLocaleWithFallback, read those utility files first.
+4. After writing the fix, ensure NO new type errors are introduced (use proper TypeScript types for your maps).
 
 TOOLS AVAILABLE:
 - read_file: Read any file (use to inspect types, imports, configs, .eslintrc)
@@ -196,12 +257,41 @@ TOOLS AVAILABLE:
     },
     {
       role: "user",
-      content: [
-          `Please fix the following ESLint errors in ${relativePath}.`,
-          `\nERRORS:\n${lintResult.stdout + lintResult.stderr}`,
-          `\nCURRENT FILE CONTENT:\n${initialFileContent}`,
-          lintImportsList ? `\nFILE IMPORTS:\n${lintImportsList}` : ''
-      ].filter(Boolean).join('\n')
+      content: (() => {
+          const parts = [
+              `Please fix the following ESLint errors in ${relativePath}.`,
+              `\nERRORS:\n${lintResult.stdout + lintResult.stderr}`,
+              `\nCURRENT FILE CONTENT:\n${initialFileContent}`,
+              lintImportsList ? `\nFILE IMPORTS:\n${lintImportsList}` : ''
+          ];
+          
+          // Inject per-file research from MEGA doc if available
+          const researchPath = path.resolve(__dirname, 'i18n-static-keys-research-MEGA.md');
+          if (fs.existsSync(researchPath)) {
+              const researchDoc = fs.readFileSync(researchPath, 'utf8');
+              // Extract the component/file name to search for in the research doc
+              const fileName = path.basename(relativePath, path.extname(relativePath));
+              const dirName = path.basename(path.dirname(relativePath));
+              // Try to find a matching section in the research doc
+              const searchTerms = [fileName, dirName, `${dirName}/${fileName}`];
+              const matchedSections = [];
+              for (const term of searchTerms) {
+                  // Look for "### File N: ...term..." sections
+                  const regex = new RegExp(`### File \\d+:.*${term.replace(/[.*+?^${}()|[\]\\\\]/g, '\\\\$&')}[^#]*`, 'gi');
+                  const matches = researchDoc.match(regex);
+                  if (matches) {
+                      for (const m of matches) {
+                          if (!matchedSections.includes(m)) matchedSections.push(m);
+                      }
+                  }
+              }
+              if (matchedSections.length > 0) {
+                  parts.push(`\nPRE-RESEARCHED ANALYSIS (from project research doc — use this to guide your fix):\n${matchedSections.join('\n\n').slice(0, 5000)}`);
+              }
+          }
+          
+          return parts.filter(Boolean).join('\n');
+      })()
     }
   ];
 
@@ -1356,8 +1446,73 @@ async function runBatchFixer() {
                                                                               65
         await runCommand(`git add .`, REPO_ROOT);
         await runCommand(`git commit --no-verify -m "refactor(${appScope}): replace dynamic i18n keys with static keys" -m "Migrate dynamic translation key construction to static string literals across multiple files. This ensures all i18n keys are statically analyzable and satisfy the @afterpay/i18n-only-static-keys ESLint rule."`, REPO_ROOT);
-        await runCommand(`git push --no-verify -u origin HEAD:refs/heads/${branchName}`, REPO_ROOT);
-        console.log(chalk.bold.green(`  🚀 Final changes pushed to ${branchName}.`));
+    }
+
+    // Always push the branch (individual fixers commit but don't push in batch mode)
+    console.log(chalk.yellow(`  Pushing branch to origin...`));
+    const pushResult = await runCommand(`git push --no-verify -u origin HEAD:refs/heads/${branchName}`, REPO_ROOT);
+    if (pushResult.success) {
+        console.log(chalk.bold.green(`  🚀 Branch pushed to ${branchName}.`));
+    } else {
+        console.log(chalk.red(`  ⚠️ Push failed: ${(pushResult.stderr || pushResult.stdout).slice(0, 300)}`));
+    }
+
+    // --- Create Pull Request ---
+    console.log(chalk.yellow(`\n  Creating Pull Request...`));
+    
+    // Build file list summary for the PR body
+    const fileBasenames = fileList.map(f => path.basename(f, path.extname(f)));
+    const fileListMarkdown = fileList.map(f => `- \`${f}\``).join('\n');
+    
+    // Determine PR title
+    const prTitle = fileList.length === 1
+        ? `refactor(${appScope}): migrate ${fileBasenames[0]} to static i18n keys`
+        : `refactor(${appScope}): replace dynamic i18n keys with static keys`;
+    
+    // Build PR description
+    const prBody = [
+        `## Summary`,
+        ``,
+        `Replace dynamic i18n key construction with static string literals to satisfy the \`@afterpay/i18n-only-static-keys\` ESLint rule.`,
+        ``,
+        `All translation keys passed to \`t()\` are now statically analyzable, enabling reliable key extraction and dead-key detection.`,
+        ``,
+        `## Changes`,
+        ``,
+        `${fileListMarkdown}`,
+        ``,
+        `## What was done`,
+        ``,
+        `- Replaced dynamic template literal keys with static string literals`,
+        `- Used declarative \`Record\` maps to enumerate all possible translation keys per enum/type`,
+        `- Split ternary key selection into separate \`t()\` calls on each branch`,
+        `- Removed corresponding entries from \`eslint-suppressions.json\``,
+        `- Preserved all existing runtime behavior — no logic changes`,
+        ``,
+        `## Testing`,
+        ``,
+        `- ESLint passes with no \`@afterpay/i18n-only-static-keys\` violations`,
+        `- All existing tests pass`,
+        `- TypeScript type checking passes`,
+    ].join('\n');
+    
+    // Write PR body to temp file to avoid shell escaping issues
+    const prBodyFile = path.join(__dirname, '.pr-body-temp.md');
+    fs.writeFileSync(prBodyFile, prBody, 'utf8');
+    
+    const prResult = await runCommand(
+        `gh pr create --title "${prTitle.replace(/"/g, '\\"')}" --body-file "${prBodyFile}" --base ${MAIN_BRANCH} --head "${branchName}" --label "${appScope}"`,
+        REPO_ROOT
+    );
+    
+    // Clean up temp file
+    try { fs.unlinkSync(prBodyFile); } catch (_) {}
+    
+    if (prResult.success) {
+        const prUrl = prResult.stdout.trim();
+        console.log(chalk.bold.green(`  🎉 Pull Request created: ${prUrl}`));
+    } else {
+        console.log(chalk.yellow(`  ⚠️ PR creation failed (you may need to create it manually): ${(prResult.stderr || prResult.stdout).slice(0, 500)}`));
     }
     
     console.log(chalk.bold.green("\n🎉 Batch processing complete!"));
