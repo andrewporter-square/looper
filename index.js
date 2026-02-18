@@ -1338,7 +1338,7 @@ async function runTestFixer() {
              fs.writeFileSync(prBodyFile, prBody, 'utf8');
              
              const prResult = await runCommand(
-                 `gh pr create --title "${prTitle.replace(/"/g, '\\"')}" --body-file "${prBodyFile}" --base ${MAIN_BRANCH} --head "${finalBranch}" --label "${prScope}"`,
+                 `gh pr create --draft --title "${prTitle.replace(/"/g, '\\"')}" --body-file "${prBodyFile}" --base ${MAIN_BRANCH} --head "${finalBranch}" --label "${prScope}"`,
                  REPO_ROOT
              );
              
@@ -1614,7 +1614,7 @@ async function runBatchFixer() {
     fs.writeFileSync(prBodyFile, prBody, 'utf8');
     
     const prResult = await runCommand(
-        `gh pr create --title "${prTitle.replace(/"/g, '\\"')}" --body-file "${prBodyFile}" --base ${MAIN_BRANCH} --head "${branchName}" --label "${appScope}"`,
+        `gh pr create --draft --title "${prTitle.replace(/"/g, '\\"')}" --body-file "${prBodyFile}" --base ${MAIN_BRANCH} --head "${branchName}" --label "${appScope}"`,
         REPO_ROOT
     );
     
@@ -2007,7 +2007,7 @@ async function runWorkerMode() {
     fs.writeFileSync(prBodyFile, prBody, 'utf8');
 
     const prResult = await runCommand(
-      `gh pr create --title "${prTitle.replace(/"/g, '\\"')}" --body-file "${prBodyFile}" --base ${MAIN_BRANCH} --head "${workerBranch}" --label "${workerScope}"`,
+      `gh pr create --draft --title "${prTitle.replace(/"/g, '\\"')}" --body-file "${prBodyFile}" --base ${MAIN_BRANCH} --head "${workerBranch}" --label "${workerScope}"`,
       REPO_ROOT
     );
 
