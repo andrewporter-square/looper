@@ -1,3 +1,5 @@
 [
-  "apps/checkout/src/page/apple-paylater/logged-in/helper.ts"
+  "apps/checkout/src/component/Asset/component/Subtitle.tsx",
+  "apps/checkout/src/component/Asset/component/CallToAction.tsx",
+  "apps/checkout/src/page/summary-pay-monthly/PayMonthlySummary.tsx"
 ]

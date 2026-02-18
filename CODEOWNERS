@@ -1,0 +1,10 @@
+# These owners will be requested for review on all PRs
+* @AfterpayTouch/rocketship-checkout
+
+# Core engine
+/index.js @aporter
+/check-prs.js @aporter
+
+# Configuration & docs
+/README.md @aporter
+/CONTRIBUTING.md @aporter

@@ -1,0 +1,21 @@
+PR REVIEW FEEDBACK (from human reviewers — address these issues):
+
+--- Comment 1 ---
+File: apps/checkout/src/state/checkout/useConfirmCheckoutFinaliser.ts
+Reviewer says: The cast `(e as object)` followed by null coalescing is problematic because `e` has type `unknown`. If `e` is not an object (e.g., a string or number), the spread operator will fail or produce unexpected results. Consider a safer approach like checking if `e` is an object before spreading: `{ error: e instanceof Error ? e.message : String(e) }` or use a type guard.
+```suggestion
+        const context =
+          typeof e === 'object' && e !== null
+            ? e
+            : { error: e instanceof Error ? e.message : String(e) }
+
+        capture.warning('Unexpected error during payment confirmation', context)
+```
+Code context:
+@@ -100,7 +99,7 @@ export const useConfirmCheckoutFinaliser = ({
+           router.push(route ?? Route.TERMINAL_ERROR)
+         }
+       } else {
+-        capture.warning('Unexpected error during payment confirmation', { ...e })
++        capture.warning('Unexpected error during payment confirmation', { ...((e as object) ?? {}) })
+Action needed: Use a safer approach to handle the unknown type `e` by checking if it is an object before spreading.
