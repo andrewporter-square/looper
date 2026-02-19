@@ -1,21 +1,743 @@
+[1]
+[1] ⎯⎯⎯⎯⎯⎯ Failed Tests 11 ⎯⎯⎯⎯⎯⎯⎯
+[1]
+[1]  FAIL  apps/checkout/src/component/Asset/GiftCard.vitest.tsx > GiftCard Asset layout Component > should match snapshot if push notification is subscribed
+[1] Error: Snapshot `GiftCard Asset layout Component > should match snapshot if push notification is subscribed 1` mismatched
+[1]
+[1] - Expected
+[1] + Received
+[1]
+[1] @@ -22,13 +22,11 @@
+[1]     >
+[1]       <h2
+[1]         class="text heading sizeM bold"
+[1]         data-testid="post-checkout-subtitle-heading"
+[1]       >
+[1] -       postcheckout:asset:ap-gift-card-202306.subtitle__A-PRE_CAPTURE
+[1] +       postcheckout:asset:ap-asset-202303.subtitle__B-PRE_CAPTURE
+[1] -       postcheckout:asset:ap-gift-card-202306.subtitle__A
+[1] -       postcheckout:asset:ap-gift-card-202306.subtitle
+[1]       </h2>
+[1]     </div>
+[1]     <div
+[1]       class="assetPaddedCard assetPaddingSmall"
+[1]     >
+[1]
+[1]  ❯ apps/checkout/src/component/Asset/GiftCard.vitest.tsx:68:23
+[1]      66|   it('should match snapshot if push notification is subscribed', () =>...
+[1]      67|     const { container } = render(<GiftCard actioned={false} assetId={A...
+[1]      68|     expect(container).toMatchSnapshot()
+[1]        |                       ^
+[1]      69|   })
+[1]      70| 
+[1]
+[1] ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/11]⎯
+[1]
+[1]  FAIL  apps/checkout/src/component/Asset/GiftCard.vitest.tsx > GiftCard Asset layout Component > should match snapshot if push notification is not subscribed
+[1] Error: Snapshot `GiftCard Asset layout Component > should match snapshot if push notification is not subscribed 1` mismatched
+[1]
+[1] - Expected
+[1] + Received
+[1]
+[1] @@ -22,13 +22,11 @@
+[1]     >
+[1]       <h2
+[1]         class="text heading sizeM bold"
+[1]         data-testid="post-checkout-subtitle-heading"
+[1]       >
+[1] -       postcheckout:asset:ap-gift-card-202306.subtitle__A-PRE_CAPTURE
+[1] +       postcheckout:asset:ap-asset-202303.subtitle__B-PRE_CAPTURE
+[1] -       postcheckout:asset:ap-gift-card-202306.subtitle__A
+[1] -       postcheckout:asset:ap-gift-card-202306.subtitle
+[1]       </h2>
+[1]     </div>
+[1]     <div
+[1]       class="assetPaddedCard assetPaddingSmall"
+[1]     >
+[1]
+[1]  ❯ apps/checkout/src/component/Asset/GiftCard.vitest.tsx:78:23
+[1]      76|     })
+[1]      77|     const { container } = render(<GiftCard actioned={false} assetId={A...
+[1]      78|     expect(container).toMatchSnapshot()
+[1]        |                       ^
+[1]      79|   })
+[1]      80| 
+[1]
+[1] ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/11]⎯
+[1]
+[1]  FAIL  apps/checkout/src/component/Asset/MarketingOptIn.vitest.tsx > Marketing Opt In Asset layout Component > should match snapshot if status is unsubscribed
+[1] Error: Snapshot `Marketing Opt In Asset layout Component > should match snapshot if status is unsubscribed 1` mismatched
+[1]
+[1] - Expected
+[1] + Received
+[1]
+[1] @@ -22,13 +22,11 @@
+[1]     >
+[1]       <h2
+[1]         class="text heading sizeM bold"
+[1]         data-testid="post-checkout-subtitle-heading"
+[1]       >
+[1] -       postcheckout:asset:ap-marketing-opt-in-202308.subtitle__A-PRE_CAPTURE
+[1] +       postcheckout:asset:ap-asset-202303.subtitle__B-PRE_CAPTURE
+[1] -       postcheckout:asset:ap-marketing-opt-in-202308.subtitle__A
+[1] -       postcheckout:asset:ap-marketing-opt-in-202308.subtitle
+[1]       </h2>
+[1]     </div>
+[1]     <div
+[1]       class="assetPaddedCard assetPaddingSmall"
+[1]       data-testid="marketing-opt-in-card"
+[1]
+[1]  ❯ apps/checkout/src/component/Asset/MarketingOptIn.vitest.tsx:99:23
+[1]      97|       />
+[1]      98|     )
+[1]      99|     expect(container).toMatchSnapshot()
+[1]        |                       ^
+[1]     100|   })
+[1]     101| 
+[1]
+[1] ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/11]⎯
+[1]
+[1]  FAIL  apps/checkout/src/component/Asset/MarketingOptIn.vitest.tsx > Marketing Opt In Asset layout Component > should match snapshot if status is undecided
+[1] Error: Snapshot `Marketing Opt In Asset layout Component > should match snapshot if status is undecided 1` mismatched
+[1]
+[1] - Expected
+[1] + Received
+[1]
+[1] @@ -22,13 +22,11 @@
+[1]     >
+[1]       <h2
+[1]         class="text heading sizeM bold"
+[1]         data-testid="post-checkout-subtitle-heading"
+[1]       >
+[1] -       postcheckout:asset:ap-marketing-opt-in-202308.subtitle__A-PRE_CAPTURE
+[1] +       postcheckout:asset:ap-asset-202303.subtitle__B-PRE_CAPTURE
+[1] -       postcheckout:asset:ap-marketing-opt-in-202308.subtitle__A
+[1] -       postcheckout:asset:ap-marketing-opt-in-202308.subtitle
+[1]       </h2>
+[1]     </div>
+[1]     <div
+[1]       class="assetPaddedCard assetPaddingSmall"
+[1]       data-testid="marketing-opt-in-card"
+[1]
+[1]  ❯ apps/checkout/src/component/Asset/MarketingOptIn.vitest.tsx:109:23
+[1]     107|     })
+[1]     108|     const { container } = render(<MarketingOptIn actioned={false} asse...
+[1]     109|     expect(container).toMatchSnapshot()
+[1]        |                       ^
+[1]     110|   })
+[1]     111| 
+[1]
+[1] ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/11]⎯
+[1]
+[1]  FAIL  apps/checkout/src/component/Asset/MarketingOptIn.vitest.tsx > Marketing Opt In Asset layout Component > should render CTA buttons as radio type when experiment value is B
+[1] Error: Snapshot `Marketing Opt In Asset layout Component > should render CTA buttons as radio type when experiment value is B 1` mismatched
+[1]
+[1] - Expected
+[1] + Received
+[1]
+[1] @@ -22,13 +22,11 @@
+[1]     >
+[1]       <h2
+[1]         class="text heading sizeM bold"
+[1]         data-testid="post-checkout-subtitle-heading"
+[1]       >
+[1] -       postcheckout:asset:ap-marketing-opt-in-202308.subtitle__B-PRE_CAPTURE
+[1] +       postcheckout:asset:ap-asset-202303.subtitle__B-PRE_CAPTURE
+[1] -       postcheckout:asset:ap-marketing-opt-in-202308.subtitle__B
+[1] -       postcheckout:asset:ap-marketing-opt-in-202308.subtitle
+[1]       </h2>
+[1]     </div>
+[1]     <div
+[1]       class="assetPaddedCard assetPaddingSmall"
+[1]       data-testid="marketing-opt-in-card"
+[1]
+[1]  ❯ apps/checkout/src/component/Asset/MarketingOptIn.vitest.tsx:183:23
+[1]     181|     )
+[1]     182| 
+[1]     183|     expect(container).toMatchSnapshot()
+[1]        |                       ^
+[1]     184|     expect(mocks.CallToAction).toHaveBeenCalledWith(expect.objectConta...
+[1]     185|   })
+[1]
+[1] ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/11]⎯
+[1]
+[1]  FAIL  apps/checkout/src/component/Asset/MarketingOptIn.vitest.tsx > Marketing Opt In Asset layout Component > Image asset component > given variant is 'A', should set Image show prop to true
+[1] Error: Snapshot `Marketing Opt In Asset layout Component > Image asset component > given variant is 'A', should set Image show prop to true 1` mismatched
+[1]
+[1] - Expected
+[1] + Received
+[1]
+[1] @@ -22,13 +22,11 @@
+[1]     >
+[1]       <h2
+[1]         class="text heading sizeM bold"
+[1]         data-testid="post-checkout-subtitle-heading"
+[1]       >
+[1] -       postcheckout:asset:ap-marketing-opt-in-202308.subtitle__A-PRE_CAPTURE
+[1] +       postcheckout:asset:ap-asset-202303.subtitle__B-PRE_CAPTURE
+[1] -       postcheckout:asset:ap-marketing-opt-in-202308.subtitle__A
+[1] -       postcheckout:asset:ap-marketing-opt-in-202308.subtitle
+[1]       </h2>
+[1]     </div>
+[1]     <div
+[1]       class="assetPaddedCard assetPaddingSmall"
+[1]       data-testid="marketing-opt-in-card"
+[1]
+[1]  ❯ apps/checkout/src/component/Asset/MarketingOptIn.vitest.tsx:205:25
+[1]     203|       )
+[1]     204| 
+[1]     205|       expect(container).toMatchSnapshot()
+[1]        |                         ^
+[1]     206|       expect(mocks.Image).toHaveBeenCalledWith(expect.objectContaining...
+[1]     207|     })
+[1]
+[1] ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/11]⎯
+[1]
+[1]  FAIL  apps/checkout/src/component/Asset/MarketingOptIn.vitest.tsx > Marketing Opt In Asset layout Component > Image asset component > given variant is 'B', should set Image show prop to false
+[1] Error: Snapshot `Marketing Opt In Asset layout Component > Image asset component > given variant is 'B', should set Image show prop to false 1` mismatched
+[1]
+[1] - Expected
+[1] + Received
+[1]
+[1] @@ -22,13 +22,11 @@
+[1]     >
+[1]       <h2
+[1]         class="text heading sizeM bold"
+[1]         data-testid="post-checkout-subtitle-heading"
+[1]       >
+[1] -       postcheckout:asset:ap-marketing-opt-in-202308.subtitle__B-PRE_CAPTURE
+[1] +       postcheckout:asset:ap-asset-202303.subtitle__B-PRE_CAPTURE
+[1] -       postcheckout:asset:ap-marketing-opt-in-202308.subtitle__B
+[1] -       postcheckout:asset:ap-marketing-opt-in-202308.subtitle
+[1]       </h2>
+[1]     </div>
+[1]     <div
+[1]       class="assetPaddedCard assetPaddingSmall"
+[1]       data-testid="marketing-opt-in-card"
+[1]
+[1]  ❯ apps/checkout/src/component/Asset/MarketingOptIn.vitest.tsx:205:25
+[1]     203|       )
+[1]     204| 
+[1]     205|       expect(container).toMatchSnapshot()
+[1]        |                         ^
+[1]     206|       expect(mocks.Image).toHaveBeenCalledWith(expect.objectContaining...
+[1]     207|     })
+[1]
+[1] ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/11]⎯
+[1]
+[1]  FAIL  apps/checkout/src/component/Asset/MarketingOptIn.vitest.tsx > Marketing Opt In Asset layout Component > Image asset component > given variant is 'D', should set Image show prop to true
+[1] Error: Snapshot `Marketing Opt In Asset layout Component > Image asset component > given variant is 'D', should set Image show prop to true 1` mismatched
+[1]
+[1] - Expected
+[1] + Received
+[1]
+[1] @@ -22,13 +22,11 @@
+[1]     >
+[1]       <h2
+[1]         class="text heading sizeM bold"
+[1]         data-testid="post-checkout-subtitle-heading"
+[1]       >
+[1] -       postcheckout:asset:ap-marketing-opt-in-202308.subtitle__D-PRE_CAPTURE
+[1] +       postcheckout:asset:ap-asset-202303.subtitle__B-PRE_CAPTURE
+[1] -       postcheckout:asset:ap-marketing-opt-in-202308.subtitle__D
+[1] -       postcheckout:asset:ap-marketing-opt-in-202308.subtitle
+[1]       </h2>
+[1]     </div>
+[1]     <div
+[1]       class="assetPaddedCard assetPaddingSmall"
+[1]       data-testid="marketing-opt-in-card"
+[1]
+[1]  ❯ apps/checkout/src/component/Asset/MarketingOptIn.vitest.tsx:205:25
+[1]     203|       )
+[1]     204| 
+[1]     205|       expect(container).toMatchSnapshot()
+[1]        |                         ^
+[1]     206|       expect(mocks.Image).toHaveBeenCalledWith(expect.objectContaining...
+[1]     207|     })
+[1]
+[1] ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/11]⎯
+[1]
+[1]  FAIL  apps/checkout/src/component/Asset/MarketingOptIn.vitest.tsx > Marketing Opt In Asset layout Component > LoaderTitle asset component > should not render LoaderTitle when user has not performed an action
+[1] Error: Snapshot `Marketing Opt In Asset layout Component > LoaderTitle asset component > should not render LoaderTitle when user has not performed an action 1` mismatched
+[1]
+[1] - Expected
+[1] + Received
+[1]
+[1] @@ -22,13 +22,11 @@
+[1]     >
+[1]       <h2
+[1]         class="text heading sizeM bold"
+[1]         data-testid="post-checkout-subtitle-heading"
+[1]       >
+[1] -       postcheckout:asset:ap-marketing-opt-in-202308.subtitle__A-PRE_CAPTURE
+[1] +       postcheckout:asset:ap-asset-202303.subtitle__B-PRE_CAPTURE
+[1] -       postcheckout:asset:ap-marketing-opt-in-202308.subtitle__A
+[1] -       postcheckout:asset:ap-marketing-opt-in-202308.subtitle
+[1]       </h2>
+[1]     </div>
+[1]     <div
+[1]       class="assetPaddedCard assetPaddingSmall"
+[1]       data-testid="marketing-opt-in-card"
+[1]
+[1]  ❯ apps/checkout/src/component/Asset/MarketingOptIn.vitest.tsx:243:25
+[1]     241|       )
+[1]     242| 
+[1]     243|       expect(container).toMatchSnapshot()
+[1]        |                         ^
+[1]     244|       expect(mocks.LoaderTitle).toHaveBeenCalledWith(expect.objectCont...
+[1]     245|     })
+[1]
+[1] ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/11]⎯
+[1]
+[1]  FAIL  apps/checkout/src/component/Asset/component/Subtitle.vitest.tsx > Asset:Subtitle component > should match the snapshot
+[1] Error: Snapshot `Asset:Subtitle component > should match the snapshot 1` mismatched
+[1]
+[1] - Expected
+[1] + Received
+[1]
+[1]   <div>
+[1]     <h2
+[1]       class="text heading sizeM bold"
+[1]       data-testid="post-checkout-subtitle-heading"
+[1]     >
+[1] -     postcheckout:asset:ap-asset-202303.subtitle__A-PRE_CAPTURE
+[1] +     postcheckout:asset:ap-asset-202303.subtitle__B-PRE_CAPTURE
+[1] -     postcheckout:asset:ap-asset-202303.subtitle__A
+[1] -     postcheckout:asset:ap-asset-202303.subtitle
+[1]     </h2>
+[1]   </div>
+[1]
+[1]  ❯ apps/checkout/src/component/Asset/component/Subtitle.vitest.tsx:66:34
+[1]      64|     const { container } = render(<Subtitle />)
+[1]      65| 
+[1]      66|     expect(container.firstChild).toMatchSnapshot()
+[1]        |                                  ^
+[1]      67|   })
+[1]      68| 
+[1]
+[1] ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/11]⎯
+[1]
+[1]  FAIL  apps/checkout/src/component/Asset/component/Subtitle.vitest.tsx > Asset:Subtitle component > should fetch the appropriate default margin spacing via getSpacingClassName
+[1] Error: Snapshot `Asset:Subtitle component > should fetch the appropriate default margin spacing via getSpacingClassName 1` mismatched
+[1]
+[1] - Expected
+[1] + Received
+[1]
+[1]   <div>
+[1]     <h2
+[1]       class="text heading sizeM bold"
+[1]       data-testid="post-checkout-subtitle-heading"
+[1]     >
+[1] -     postcheckout:asset:ap-asset-202303.subtitle__A-PRE_CAPTURE
+[1] +     postcheckout:asset:ap-asset-202303.subtitle__B-PRE_CAPTURE
+[1] -     postcheckout:asset:ap-asset-202303.subtitle__A
+[1] -     postcheckout:asset:ap-asset-202303.subtitle
+[1]     </h2>
+[1]   </div>
+[1]
+[1]  ❯ apps/checkout/src/component/Asset/component/Subtitle.vitest.tsx:76:34
+[1]      74|   it('should fetch the appropriate default margin spacing via getSpaci...
+[1]      75|     const { container } = render(<Subtitle />)
+[1]      76|     expect(container.firstChild).toMatchSnapshot()
+[1]        |                                  ^
+[1]      77|     expect(mocks.getSpacingClassName).toHaveBeenCalledWith({ marginBot...
+[1]      78|   })
+[1]
+[1] ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/11]⎯
+[1]
+[1]
+[1]   Snapshots  11 failed
+[1]  Test Files  3 failed | 1105 passed (1108)
+[1]       Tests  11 failed | 11975 passed | 7 skipped (11993)
+[1]    Start at  07:10:28
+[1]    Duration  155.29s (transform 243.07s, setup 378.62s, collect 7182.21s, tests 258.74s, environment 515.44s, prepare 166.57s)
+[1]
+[1] TZ=Australia/Melbourne vitest run --coverage exited with code 1
+error Command failed with exit code 1.
+info Visit https://yarnpkg.com/en/docs/cli/run for documentation about this command.
+🚨 Error: The command exited with status 1
+
 PR REVIEW FEEDBACK (from human reviewers — address these issues):
 
 --- Comment 1 ---
-File: apps/checkout/src/state/checkout/useConfirmCheckoutFinaliser.ts
-Reviewer says: The cast `(e as object)` followed by null coalescing is problematic because `e` has type `unknown`. If `e` is not an object (e.g., a string or number), the spread operator will fail or produce unexpected results. Consider a safer approach like checking if `e` is an object before spreading: `{ error: e instanceof Error ? e.message : String(e) }` or use a type guard.
-```suggestion
-        const context =
-          typeof e === 'object' && e !== null
-            ? e
-            : { error: e instanceof Error ? e.message : String(e) }
+File: apps/checkout/src/component/Asset/component/CallToAction.tsx
+Reviewer says: The translation keys referenced here don't exist in the locale files. Based on the locale file structure, the keys should be:
+- `positiveCta__A-PRE_CAPTURE` doesn't exist (only `positiveCta__A` exists)
+- `positiveCta__B-PRE_CAPTURE` doesn't exist (only `positiveCta__B` exists)
+- `positiveCta__D-PRE_CAPTURE` doesn't exist (only `positiveCta__D` exists)
 
-        capture.warning('Unexpected error during payment confirmation', context)
+The locale file only has variant-specific keys without the flow suffix (e.g., `positiveCta__A`, not `positiveCta__A-PRE_CAPTURE`). These translation calls will fail to find the expected keys and fall back to the base key with an empty array default value.
+```suggestion
+        // fallback order: __<variant>, base
 ```
 Code context:
-@@ -100,7 +99,7 @@ export const useConfirmCheckoutFinaliser = ({
-           router.push(route ?? Route.TERMINAL_ERROR)
-         }
-       } else {
--        capture.warning('Unexpected error during payment confirmation', { ...e })
-+        capture.warning('Unexpected error during payment confirmation', { ...((e as object) ?? {}) })
-Action needed: Use a safer approach to handle the unknown type `e` by checking if it is an object before spreading.
+@@ -25,6 +27,100 @@ interface Props extends AssetChildComponentSpacing {
+   buttonType?: 'radio' | 'default'
+ }
+ 
++type TranslationOption = {
++  returnObjects: true
++  defaultValue: never[]
++  context: string
++}
++
++const getAssetCtaLabels = (params: {
++  t: (key: string, options?: { [key: string]: unknown }) => unknown
++  assetId: AssetId
++  ctaType: 'positiveCta' | 'negativeCta'
++  translationOption: TranslationOption
++  flow: PostCheckoutFlow
++  variant: ExperimentValue
++}): unknown => {
++  const { t, assetId, ctaType, translationOption, flow, variant } = params
++
++  // Must keep translation keys static for i18n extraction. This is the static equivalent of
++  // useGetLocaleWithFallback('postcheckout') for the CTA keys.
++  switch (assetId) {
++    case AssetId.Survey202303: {
++      if (ctaType === 'positiveCta') {
++        return t('postcheckout:asset:ap-asset-202303.positiveCta', translationOption)
++      }
++      return t('postcheckout:asset:ap-asset-202303.negativeCta', translationOption)
++    }
++
++    case AssetId.GiftCard202306: {
++      if (ctaType === 'positiveCta') {
++        if (flow === PostCheckoutFlow.PreCapture) {
++          if (variant === 'A' || variant === 'B' || variant === 'C' || variant === 'D' || variant === 'E') {
++            // No flow/variant overrides exist for this CTA, but keep the precedence consistent.
++            return t('postcheckout:asset:ap-gift-card-202306.positiveCta', translationOption)
++          }
++        }
++        return t('postcheckout:asset:ap-gift-card-202306.positiveCta', translationOption)
++      }
++      return t('postcheckout:asset:ap-gift-card-202306.negativeCta', translationOption)
++    }
++
++    case AssetId.GoogleSSO: {
++      if (ctaType === 'positiveCta') {
++        return t('postcheckout:asset:google-sso-202308.positiveCta', translationOption)
++      }
++      return t('postcheckout:asset:google-sso-202308.negativeCta', translationOption)
++    }
++
++    case AssetId.MarketingOptIn202308: {
++      if (ctaType === 'positiveCta') {
++        // fallback order: __<variant>-<flow>, __<variant>, base
++        if (flow === PostCheckoutFlow.PreCapture && variant === 'A') {
++          return t('postcheckout:asset:ap-marketing-opt-in-202308.positiveCta__A-PRE_CAPTURE', translationOption)
++        }
++        if (flow === PostCheckoutFlow.PreCapture && variant === 'B') {
++          return t('postcheckout:asset:ap-marketing-opt-in-202308.positiveCta__B-PRE_CAPTURE', translationOption)
++        }
++        if (flow === PostCheckoutFlow.PreCapture && variant === 'D') {
++          return t('postcheckout:asset:ap-marketing-opt-in-202308.positiveCta__D-PRE_CAPTURE', translationOption)
++        }
++
+Action needed: Fix translation keys to match existing locale file structure by removing '-PRE_CAPTURE' suffix.
+--- Comment 2 ---
+File: apps/checkout/src/component/Asset/component/CallToAction.tsx
+Reviewer says: The base key `postcheckout:asset:ap-marketing-opt-in-202308.negativeCta` doesn't exist in the locale files. The locale files only contain `negativeCta__B` for this asset. When the variant is not 'B' or when flow doesn't match, this will fall back to a non-existent key, resulting in an empty array from the default value.
+```suggestion
+      return t('postcheckout:asset:ap-marketing-opt-in-202308.negativeCta__B', translationOption)
+```
+Code context:
+@@ -25,6 +27,100 @@ interface Props extends AssetChildComponentSpacing {
+   buttonType?: 'radio' | 'default'
+ }
+ 
++type TranslationOption = {
++  returnObjects: true
++  defaultValue: never[]
++  context: string
++}
++
++const getAssetCtaLabels = (params: {
++  t: (key: string, options?: { [key: string]: unknown }) => unknown
++  assetId: AssetId
++  ctaType: 'positiveCta' | 'negativeCta'
++  translationOption: TranslationOption
++  flow: PostCheckoutFlow
++  variant: ExperimentValue
++}): unknown => {
++  const { t, assetId, ctaType, translationOption, flow, variant } = params
++
++  // Must keep translation keys static for i18n extraction. This is the static equivalent of
++  // useGetLocaleWithFallback('postcheckout') for the CTA keys.
++  switch (assetId) {
++    case AssetId.Survey202303: {
++      if (ctaType === 'positiveCta') {
++        return t('postcheckout:asset:ap-asset-202303.positiveCta', translationOption)
++      }
++      return t('postcheckout:asset:ap-asset-202303.negativeCta', translationOption)
++    }
++
++    case AssetId.GiftCard202306: {
++      if (ctaType === 'positiveCta') {
++        if (flow === PostCheckoutFlow.PreCapture) {
++          if (variant === 'A' || variant === 'B' || variant === 'C' || variant === 'D' || variant === 'E') {
++            // No flow/variant overrides exist for this CTA, but keep the precedence consistent.
++            return t('postcheckout:asset:ap-gift-card-202306.positiveCta', translationOption)
++          }
++        }
++        return t('postcheckout:asset:ap-gift-card-202306.positiveCta', translationOption)
++      }
++      return t('postcheckout:asset:ap-gift-card-202306.negativeCta', translationOption)
++    }
++
++    case AssetId.GoogleSSO: {
++      if (ctaType === 'positiveCta') {
++        return t('postcheckout:asset:google-sso-202308.positiveCta', translationOption)
++      }
++      return t('postcheckout:asset:google-sso-202308.negativeCta', translationOption)
++    }
++
++    case AssetId.MarketingOptIn202308: {
++      if (ctaType === 'positiveCta') {
++        // fallback order: __<variant>-<flow>, __<variant>, base
++        if (flow === PostCheckoutFlow.PreCapture && variant === 'A') {
++          return t('postcheckout:asset:ap-marketing-opt-in-202308.positiveCta__A-PRE_CAPTURE', translationOption)
++        }
++        if (flow === PostCheckoutFlow.PreCapture && variant === 'B') {
++          return t('postcheckout:asset:ap-marketing-opt-in-202308.positiveCta__B-PRE_CAPTURE', translationOption)
++        }
++        if (flow === PostCheckoutFlow.PreCapture && variant === 'D') {
++          return t('postcheckout:asset:ap-marketing-opt-in-202308.positiveCta__D-PRE_CAPTURE', translationOption)
++        }
++
++        if (variant === 'A') {
++          return t('postcheckout:asset:ap-marketing-opt-in-202308.positiveCta__A', translationOption)
++        }
++        if (variant === 'B') {
++          return t('postcheckout:asset:ap-marketing-opt-in-202308.positiveCta__B', translationOption)
++        }
++        if (variant === 'D') {
++          return t('postcheckout:asset:ap-marketing-opt-in-202308.positiveCta__D', translationOption)
++        }
++
++        return t('postcheckout:asset:ap-marketing-opt-in-202308.positiveCta', translationOption)
++      }
++
++      // negativeCta only exists for variant B in the locale file (no base key)
++      if (flow === PostCheckoutFlow.PreCapture && variant === 'B') {
++        return t('postcheckout:asset:ap-marketing-opt-in-202308.negativeCta__B-PRE_CAPTURE', translationOption)
++      }
++      if (variant === 'B') {
++        return t('postcheckout:asset:ap-marketing-opt-in-202308.negativeCta__B', translationOption)
++      }
++
++      return t('postcheckout:asset:ap-marketing-opt-in-202308.negativeCta', translationOption)
+Action needed: Change the base key for negativeCta to 'negativeCta__B' to match the locale file.
+--- Comment 3 ---
+File: apps/checkout/src/component/Asset/component/CallToAction.tsx
+Reviewer says: The default fallback values use 'C' variant and 'PreCapture' flow, but these may not align with the actual experiment configuration from `useGetLocaleWithFallback`. This could lead to incorrect translation keys being selected when the parseKey function returns null (e.g., for keys without variant/flow suffixes). Consider using the actual variant and flow from the hooks (`usePostCheckoutExperiment` and `usePostCheckoutFlow`) instead of hardcoded defaults, or document why these specific defaults are chosen.
+Code context:
+@@ -43,16 +139,71 @@ export const CallToAction: FunctionComponent<Props> = ({
+   const localeWithFallback = useGetLocaleWithFallback()
+ 
+   const ctaStyle = clsx(styles.callToAction, getSpacingClassName({ margin, marginTop, marginBottom }))
+-  const translationOption = {
++
++  const translationOption: TranslationOption = {
+     returnObjects: true,
++    // ensure the empty array is typed as never[] as expected by TranslationOption
+     defaultValue: [],
++    // next-i18next expects context to be a string
+     context: notificationMethod,
+   }
+ 
+-  const buttonLabelMap = {
+-    [ActionType.Positive]: getCta(t(localeWithFallback('positiveCta'), translationOption)),
+-    [ActionType.Negative]: getCta(t(localeWithFallback('negativeCta'), translationOption)),
++  // localeWithFallback returns a dynamic array which violates static-key extraction.
++  // We still call it to preserve behavior, but we do not pass its output to t().
++  const [positiveKeyWithFlowAndVariant] = localeWithFallback('positiveCta')
++  const [negativeKeyWithFlowAndVariant] = localeWithFallback('negativeCta')
++
++  // Parse the dynamic key so we can select the equivalent static t() key.
++  // Example: postcheckout:asset:ap-asset-202303.title__A-PRE_CAPTURE
++  const parseKey = (key: string): { flow: PostCheckoutFlow; variant: ExperimentValue } | null => {
++    const suffix = key.split('.').pop() ?? ''
++    const [, ctx] = suffix.split('__')
++    if (!ctx) {
++      return null
++    }
++
++    const [variantRaw, flowRaw] = ctx.split('-')
++    if (!variantRaw || !flowRaw) {
++      return null
++    }
++
++    if (variantRaw !== 'A' && variantRaw !== 'B' && variantRaw !== 'C' && variantRaw !== 'D' && variantRaw !== 'E') {
++      return null
++    }
++
++    if (flowRaw !== PostCheckoutFlow.PreCapture && flowRaw !== PostCheckoutFlow.PostCapture && flowRaw !== PostCheckoutFlow.Ineligible) {
++      return null
++    }
++
++    return { variant: variantRaw, flow: flowRaw }
++  }
++
++  const parsedPositive = parseKey(positiveKeyWithFlowAndVariant)
++  const parsedNegative = parseKey(negativeKeyWithFlowAndVariant)
++
++  const positiveLabelsRaw = getAssetCtaLabels({
++    t,
++    assetId: id,
++    ctaType: 'positiveCta',
++    translationOption,
++    flow: parsedPositive?.flow ?? PostCheckoutFlow.PreCapture,
++    variant: parsedPositive?.variant ?? 'C',
++  })
++
++  const negativeLabelsRaw = getAssetCtaLabels({
++    t,
++    assetId: id,
++    ctaType: 'negativeCta',
++    translationOption,
++    flow: parsedNegative?.flow ?? PostCheckoutFlow.PreCapture,
++    variant: parsedNegative?.variant ?? 'C',
++  })
+Action needed: Improve parsing logic by validating the number of segments after splitting the key.
+--- Comment 4 ---
+File: apps/checkout/src/component/Asset/component/CallToAction.tsx
+Reviewer says: The parsing logic splits on '-' to separate variant and flow (line 165), but doesn't validate the number of segments. For a key like `positiveCta__A-PRE_CAPTURE-EXTRA`, this would incorrectly parse 'A' as variant and 'PRE' as flowRaw, missing '_CAPTURE-EXTRA'. Consider using a more robust parsing approach or validating that there are exactly 2 segments after the split.
+```suggestion
+    const ctxParts = ctx.split('-')
+    if (ctxParts.length !== 2) {
+      return null
+    }
+
+    const [variantRaw, flowRaw] = ctxParts
+    if (!variantRaw || !flowRaw) {
+```
+Code context:
+@@ -43,16 +139,71 @@ export const CallToAction: FunctionComponent<Props> = ({
+   const localeWithFallback = useGetLocaleWithFallback()
+ 
+   const ctaStyle = clsx(styles.callToAction, getSpacingClassName({ margin, marginTop, marginBottom }))
+-  const translationOption = {
++
++  const translationOption: TranslationOption = {
+     returnObjects: true,
++    // ensure the empty array is typed as never[] as expected by TranslationOption
+     defaultValue: [],
++    // next-i18next expects context to be a string
+     context: notificationMethod,
+   }
+ 
+-  const buttonLabelMap = {
+-    [ActionType.Positive]: getCta(t(localeWithFallback('positiveCta'), translationOption)),
+-    [ActionType.Negative]: getCta(t(localeWithFallback('negativeCta'), translationOption)),
++  // localeWithFallback returns a dynamic array which violates static-key extraction.
++  // We still call it to preserve behavior, but we do not pass its output to t().
++  const [positiveKeyWithFlowAndVariant] = localeWithFallback('positiveCta')
++  const [negativeKeyWithFlowAndVariant] = localeWithFallback('negativeCta')
++
++  // Parse the dynamic key so we can select the equivalent static t() key.
++  // Example: postcheckout:asset:ap-asset-202303.title__A-PRE_CAPTURE
++  const parseKey = (key: string): { flow: PostCheckoutFlow; variant: ExperimentValue } | null => {
++    const suffix = key.split('.').pop() ?? ''
++    const [, ctx] = suffix.split('__')
++    if (!ctx) {
++      return null
++    }
++
++    const [variantRaw, flowRaw] = ctx.split('-')
++    if (!variantRaw || !flowRaw) {
++      return null
++    }
++
++    if (variantRaw !== 'A' && variantRaw !== 'B' && variantRaw !== 'C' && variantRaw !== 'D' && variantRaw !== 'E') {
+Action needed: Change the return type of the getAssetCtaLabels function to 'string | string[]' for better type safety.
+--- Comment 5 ---
+File: apps/checkout/src/component/Asset/component/CallToAction.tsx
+Reviewer says: The translation keys referenced here don't exist in the locale files. Based on the locale file structure, the keys should be:
+- `negativeCta__B-PRE_CAPTURE` doesn't exist (only `negativeCta__B` exists)
+
+The locale file only has the variant-specific key without the flow suffix (e.g., `negativeCta__B`, not `negativeCta__B-PRE_CAPTURE`). This translation call will fail to find the expected key.
+```suggestion
+        return t('postcheckout:asset:ap-marketing-opt-in-202308.negativeCta__B', translationOption)
+```
+Code context:
+@@ -25,6 +27,100 @@ interface Props extends AssetChildComponentSpacing {
+   buttonType?: 'radio' | 'default'
+ }
+ 
++type TranslationOption = {
++  returnObjects: true
++  defaultValue: never[]
++  context: string
++}
++
++const getAssetCtaLabels = (params: {
++  t: (key: string, options?: { [key: string]: unknown }) => unknown
++  assetId: AssetId
++  ctaType: 'positiveCta' | 'negativeCta'
++  translationOption: TranslationOption
++  flow: PostCheckoutFlow
++  variant: ExperimentValue
++}): unknown => {
++  const { t, assetId, ctaType, translationOption, flow, variant } = params
++
++  // Must keep translation keys static for i18n extraction. This is the static equivalent of
++  // useGetLocaleWithFallback('postcheckout') for the CTA keys.
++  switch (assetId) {
++    case AssetId.Survey202303: {
++      if (ctaType === 'positiveCta') {
++        return t('postcheckout:asset:ap-asset-202303.positiveCta', translationOption)
++      }
++      return t('postcheckout:asset:ap-asset-202303.negativeCta', translationOption)
++    }
++
++    case AssetId.GiftCard202306: {
++      if (ctaType === 'positiveCta') {
++        if (flow === PostCheckoutFlow.PreCapture) {
++          if (variant === 'A' || variant === 'B' || variant === 'C' || variant === 'D' || variant === 'E') {
++            // No flow/variant overrides exist for this CTA, but keep the precedence consistent.
++            return t('postcheckout:asset:ap-gift-card-202306.positiveCta', translationOption)
++          }
++        }
++        return t('postcheckout:asset:ap-gift-card-202306.positiveCta', translationOption)
++      }
++      return t('postcheckout:asset:ap-gift-card-202306.negativeCta', translationOption)
++    }
++
++    case AssetId.GoogleSSO: {
++      if (ctaType === 'positiveCta') {
++        return t('postcheckout:asset:google-sso-202308.positiveCta', translationOption)
++      }
++      return t('postcheckout:asset:google-sso-202308.negativeCta', translationOption)
++    }
++
++    case AssetId.MarketingOptIn202308: {
++      if (ctaType === 'positiveCta') {
++        // fallback order: __<variant>-<flow>, __<variant>, base
++        if (flow === PostCheckoutFlow.PreCapture && variant === 'A') {
++          return t('postcheckout:asset:ap-marketing-opt-in-202308.positiveCta__A-PRE_CAPTURE', translationOption)
++        }
++        if (flow === PostCheckoutFlow.PreCapture && variant === 'B') {
++          return t('postcheckout:asset:ap-marketing-opt-in-202308.positiveCta__B-PRE_CAPTURE', translationOption)
++        }
++        if (flow === PostCheckoutFlow.PreCapture && variant === 'D') {
++          return t('postcheckout:asset:ap-marketing-opt-in-202308.positiveCta__D-PRE_CAPTURE', translationOption)
++        }
++
++        if (variant === 'A') {
++          return t('postcheckout:asset:ap-marketing-opt-in-202308.positiveCta__A', translationOption)
++        }
++        if (variant === 'B') {
++          return t('postcheckout:asset:ap-marketing-opt-in-202308.positiveCta__B', translationOption)
++        }
++        if (variant === 'D') {
++          return t('postcheckout:asset:ap-marketing-opt-in-202308.positiveCta__D', translationOption)
++        }
++
++        return t('postcheckout:asset:ap-marketing-opt-in-202308.positiveCta', translationOption)
++      }
++
++      // negativeCta only exists for variant B in the locale file (no base key)
++      if (flow === PostCheckoutFlow.PreCapture && variant === 'B') {
++        return t('postcheckout:asset:ap-marketing-opt-in-202308.negativeCta__B-PRE_CAPTURE', translationOption)
+Action needed: Simplify redundant conditional block by directly returning the translation key.

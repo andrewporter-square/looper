@@ -685,13 +685,153 @@ return t(shippingOptionHeading, { merchantName, count: ... })
 
 ### Verified: ApplePaylaterConsumerLendingSummary (6 violations)
 
-Same error notification patterns as PayMonthlySummary:
-1-2. `t(\`summary:error.${error?.error}.heading\`)` / `.message` — `error.error` is a `TerminalErrorCode`
-3-4. `t(\`summary:bankAccountErrors.${bankAccountReason}.heading\`)` / `.message` — `bankAccountReason` is `BankAccountErrorReason`
-5-6. `t(\`summary:error.${reason}.heading\`, opts)` / `.message` — `reason` is `CardErrorReason`
+Same error notification patterns as PayMonthlySummary. There are 3 dynamic `t()` patterns to fix:
 
-**BankAccountErrorReason (3 values):** `'unLinked'`, `'noValidCard'`, `'checkingNotAllowed'`
-**CardErrorReason (10+ values):** `'invalidBrand'`, `'cardExpiry'`, `'achNotAllowed'`, `'creditCardNotAllowed'`, `'cardExpiryLimitInMonths'`, `'cashAppCardIneligible'`, `'dssProhibitedPaymentMethod'`, `'fallbackGenericMessage'`, plus TopazCardErrorReason values: `'unacceptableIssuerRestrictedCard'`, `'unacceptableCard'`
+#### Pattern 1: `error?.error` (RecoverableErrorCode) — lines ~206-211
+
+```typescript
+// Guard: Object.values(RecoverableErrorCode).includes(error?.error as RecoverableErrorCode)
+const heading = t(`summary:error.${error?.error}.heading`)
+const message = t(`summary:error.${error?.error}.message`)
+```
+
+**Note:** The existing MEGA doc incorrectly said this was `TerminalErrorCode`. It is actually guarded by `RecoverableErrorCode` — the code checks `Object.values(RecoverableErrorCode).includes(...)` before reaching these lines.
+
+**RecoverableErrorCode enum (7 values):**
+| Enum Key | String Value | Translation Exists? |
+|---|---|---|
+| `UnsupportedCardIssuerBank` | `'unsupportedCardIssuerBank'` | ✅ |
+| `UnsupportedCardIssuer` | `'foreignCard'` | ✅ |
+| `UnsupportedCardType` | `'prepaidCard'` | ✅ |
+| `AddPaymentActiveCardLimitExceeded` | `'activeCardLimitExceeded'` | ❌ no translation key |
+| `AddPaymentInactiveCardLimitExceeded` | `'inactiveCardLimitExceeded'` | ❌ no translation key |
+| `CreditCardProhibitedForPaymentType` | `'creditCardProhibitedForPaymentType'` | ✅ |
+| `CashAppCardIneligible` | `'cashAppCardIneligible'` | ✅ |
+
+**Fix:** Create a static map keyed by `RecoverableErrorCode`:
+```typescript
+const recoverableErrorNotifications: Record<RecoverableErrorCode, { heading: string; message: string }> = {
+  [RecoverableErrorCode.UnsupportedCardIssuerBank]: {
+    heading: t('summary:error.unsupportedCardIssuerBank.heading'),
+    message: t('summary:error.unsupportedCardIssuerBank.message'),
+  },
+  [RecoverableErrorCode.UnsupportedCardIssuer]: {
+    heading: t('summary:error.foreignCard.heading'),
+    message: t('summary:error.foreignCard.message'),
+  },
+  [RecoverableErrorCode.UnsupportedCardType]: {
+    heading: t('summary:error.prepaidCard.heading'),
+    message: t('summary:error.prepaidCard.message'),
+  },
+  [RecoverableErrorCode.AddPaymentActiveCardLimitExceeded]: {
+    heading: t('summary:error.activeCardLimitExceeded.heading'),
+    message: t('summary:error.activeCardLimitExceeded.message'),
+  },
+  [RecoverableErrorCode.AddPaymentInactiveCardLimitExceeded]: {
+    heading: t('summary:error.inactiveCardLimitExceeded.heading'),
+    message: t('summary:error.inactiveCardLimitExceeded.message'),
+  },
+  [RecoverableErrorCode.CreditCardProhibitedForPaymentType]: {
+    heading: t('summary:error.creditCardProhibitedForPaymentType.heading'),
+    message: t('summary:error.creditCardProhibitedForPaymentType.message'),
+  },
+  [RecoverableErrorCode.CashAppCardIneligible]: {
+    heading: t('summary:error.cashAppCardIneligible.heading'),
+    message: t('summary:error.cashAppCardIneligible.message'),
+  },
+}
+// Then: const { heading, message } = recoverableErrorNotifications[error.error as RecoverableErrorCode]
+```
+
+#### Pattern 2: `bankAccountReason` (BankAccountErrorReason) — lines ~258-261
+
+```typescript
+const heading = t(`summary:bankAccountErrors.${bankAccountReason}.heading`)
+const message = t(`summary:bankAccountErrors.${bankAccountReason}.message`)
+```
+
+**BankAccountErrorReason type (3 values):**
+| Value | Translation Exists? |
+|---|---|
+| `'unLinked'` | ❌ no translation key (missing from `summary.json`) |
+| `'noValidCard'` | ✅ |
+| `'checkingNotAllowed'` | ✅ |
+
+Note: `'fraudCheckNotAllowed'` also exists in translations but is NOT in the `BankAccountErrorReason` type.
+
+**Fix:** Create a static map keyed by `BankAccountErrorReason`:
+```typescript
+const bankAccountErrorNotifications: Record<BankAccountErrorReason, { heading: string; message: string }> = {
+  unLinked: {
+    heading: t('summary:bankAccountErrors.unLinked.heading'),
+    message: t('summary:bankAccountErrors.unLinked.message'),
+  },
+  noValidCard: {
+    heading: t('summary:bankAccountErrors.noValidCard.heading'),
+    message: t('summary:bankAccountErrors.noValidCard.message'),
+  },
+  checkingNotAllowed: {
+    heading: t('summary:bankAccountErrors.checkingNotAllowed.heading'),
+    message: t('summary:bankAccountErrors.checkingNotAllowed.message'),
+  },
+}
+// Then: const { heading, message } = bankAccountErrorNotifications[bankAccountReason]
+```
+
+#### Pattern 3: `reason` (CardErrorReason) with context — lines ~308-311
+
+```typescript
+const options = { context: switched ? 'switched' : 'cannotSwitch' }
+const heading = t(`summary:error.${reason}.heading`, options)
+const message = t(`summary:error.${reason}.message`, options)
+```
+
+This uses i18next context suffixes (`_switched` / `_cannotSwitch`). The `cardExpiryLimitInMonths` case is already handled separately with static keys above this code, so the remaining `CardErrorReason` values are:
+
+**CardErrorReason values reaching this code path:**
+| Value | Translation `.heading_switched`? | `.heading_cannotSwitch`? | `.message_switched`? | `.message_cannotSwitch`? |
+|---|---|---|---|---|
+| `'invalidBrand'` | ✅ | ✅ | ✅ | ✅ |
+| `'cardExpiry'` | ✅ | ✅ | ✅ | ✅ |
+| `'achNotAllowed'` | ❌ | ❌ | ❌ | ❌ |
+| `'creditCardNotAllowed'` | ✅ | ✅ | ✅ | ✅ |
+| `'cashAppCardIneligible'` | ✅ | ✅ | ✅ | ✅ |
+| `'dssProhibitedPaymentMethod'` | ❌ | ❌ | ❌ | ❌ |
+| `'fallbackGenericMessage'` | ✅ | ✅ | ✅ | ✅ |
+| `'unacceptableIssuerRestrictedCard'` | ✅ | ✅ | ✅ | ✅ |
+| `'unacceptableCard'` | ✅ | ✅ | ✅ | ✅ |
+
+**Fix:** Two approaches work here:
+
+**Option A (Preferred — declarative map with `t()` calls and context variants inline):**
+```typescript
+type CardErrorNotification = {
+  heading_switched: string; heading_cannotSwitch: string;
+  message_switched: string; message_cannotSwitch: string;
+}
+const cardErrorNotifications: Record<string, CardErrorNotification> = {
+  invalidBrand: {
+    heading_switched: t('summary:error.invalidBrand.heading_switched'),
+    heading_cannotSwitch: t('summary:error.invalidBrand.heading_cannotSwitch'),
+    message_switched: t('summary:error.invalidBrand.message_switched'),
+    message_cannotSwitch: t('summary:error.invalidBrand.message_cannotSwitch'),
+  },
+  // ... repeat for each value
+}
+const suffix = switched ? '_switched' : '_cannotSwitch'
+const entry = cardErrorNotifications[reason]
+const heading = entry[`heading${suffix}`]
+const message = entry[`message${suffix}`]
+```
+
+**Option B (Simpler — keep context param but enumerate keys):**
+Since `reason` is a finite set, a `switch` or `if/else` over each value calling `t()` with static keys is also valid. This avoids the dynamic template literal while preserving the `context` option.
+
+**Summary:**
+- All 3 patterns are finite enumerations with known values
+- Missing translation keys (`activeCardLimitExceeded`, `inactiveCardLimitExceeded`, `achNotAllowed`, `dssProhibitedPaymentMethod`, `unLinked`) will return the key string as-is via i18next — same behavior whether dynamic or static
+- The fix is to build lookup maps and index into them
+- Tests should assert the notification heading/message for each enum value
 
 ### Verified: CardScan (4 violations)
 

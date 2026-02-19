@@ -220,6 +220,129 @@ function classifyCheckState(state) {
   return 'pending';
 }
 
+// ─── Fetch web page content (for CI failure pages) ─────────────────────────
+
+function stripHtmlToText(html, maxChars = 30000) {
+  const text = html
+    .replace(/<script[\s\S]*?<\/script>/gi, '')  // remove scripts
+    .replace(/<style[\s\S]*?<\/style>/gi, '')    // remove styles
+    .replace(/<nav[\s\S]*?<\/nav>/gi, '')        // remove nav
+    .replace(/<header[\s\S]*?<\/header>/gi, '')  // remove header
+    .replace(/<footer[\s\S]*?<\/footer>/gi, '')  // remove footer
+    .replace(/<[^>]+>/g, ' ')                     // strip remaining tags
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')
+    .replace(/[ \t]+/g, ' ')                      // collapse whitespace
+    .replace(/(\n\s*){3,}/g, '\n\n')              // collapse blank lines
+    .trim();
+  return text.slice(0, maxChars);
+}
+
+async function fetchWebPageContent(url, maxChars = 30000) {
+  if (!url) return null;
+  try {
+    console.log(chalk.dim(`      Fetching page: ${url.slice(0, 120)}...`));
+
+    // For GitHub URLs, use `gh api` or `gh` CLI which inherits gh auth credentials
+    if (url.includes('github.com')) {
+      // Convert GitHub web URLs to API calls where possible
+      const actionsRunMatch = url.match(/github\.com\/([^/]+)\/([^/]+)\/actions\/runs\/(\d+)/);
+      if (actionsRunMatch) {
+        const [, owner, repo, runId] = actionsRunMatch;
+        // Fetch the run details via gh api (authenticated automatically)
+        const result = await runCommand(
+          `gh api repos/${owner}/${repo}/actions/runs/${runId} --jq '{status, conclusion, name: .name, html_url: .html_url, run_attempt: .run_attempt}'`,
+          REPO_ROOT
+        );
+        // Also get the failed job logs
+        const logsResult = await runCommand(
+          `gh run view ${runId} --repo ${owner}/${repo} --log-failed 2>&1 | tail -300`,
+          REPO_ROOT
+        );
+        const combined = [
+          result.success ? result.stdout : '',
+          logsResult.success ? logsResult.stdout : '',
+        ].filter(Boolean).join('\n');
+        if (combined.trim().length > 50) return combined.slice(0, maxChars);
+      }
+
+      // For other GitHub pages (e.g. check suite pages), use gh api with raw accept
+      const apiPath = url.replace(/https?:\/\/github\.com/, '').replace(/^\/+/, '/');
+      // Try fetching as API path — this won't always work but is worth trying
+      const ghResult = await runCommand(
+        `gh api "${apiPath}" 2>/dev/null | head -500`,
+        REPO_ROOT
+      );
+      if (ghResult.success && ghResult.stdout.trim().length > 50) {
+        return ghResult.stdout.slice(0, maxChars);
+      }
+    }
+
+    // For Buildkite URLs, use BUILDKITE_TOKEN if available
+    // For other CI providers, try common token env vars
+    const authHeaders = {};
+    if (url.includes('buildkite.com') && process.env.BUILDKITE_TOKEN) {
+      authHeaders['Authorization'] = `Bearer ${process.env.BUILDKITE_TOKEN}`;
+    } else if (url.includes('circleci.com') && process.env.CIRCLECI_TOKEN) {
+      authHeaders['Circle-Token'] = process.env.CIRCLECI_TOKEN;
+    } else if (process.env.GITHUB_TOKEN && url.includes('github.com')) {
+      authHeaders['Authorization'] = `token ${process.env.GITHUB_TOKEN}`;
+    }
+
+    // Fallback: raw fetch (works for public pages and when tokens are provided)
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+
+    const response = await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        'Accept': 'text/html, application/json, text/plain',
+        'User-Agent': 'looper-ci-checker/1.0',
+        ...authHeaders,
+      },
+    });
+    clearTimeout(timeout);
+
+    if (!response.ok) {
+      console.log(chalk.dim(`      HTTP ${response.status} for ${url.slice(0, 80)}`));
+      return null;
+    }
+
+    const contentType = response.headers.get('content-type') || '';
+    const body = await response.text();
+
+    if (contentType.includes('application/json')) {
+      return body.slice(0, maxChars);
+    }
+
+    return stripHtmlToText(body, maxChars);
+  } catch (err) {
+    console.log(chalk.dim(`      Failed to fetch page: ${err.message}`));
+    return null;
+  }
+}
+
+// ─── Fetch GitHub Actions annotations (concise error summaries) ─────────────
+
+async function getRunAnnotations(runId) {
+  // Annotations are the most useful summaries — they contain the actual error lines
+  const result = await runCommand(
+    `gh api repos/{owner}/{repo}/actions/runs/${runId}/annotations --paginate --jq '.[] | {message: .message, annotation_level: .annotation_level, path: .path, start_line: .start_line, title: .title}' 2>/dev/null || echo ''`,
+    REPO_ROOT
+  );
+
+  if (!result.success || !result.stdout.trim()) return [];
+
+  const annotations = [];
+  for (const line of result.stdout.trim().split('\n')) {
+    try {
+      const a = JSON.parse(line);
+      if (a.message) annotations.push(a);
+    } catch (_) {}
+  }
+  return annotations;
+}
+
 // ─── Fetch CI logs for a failing check ──────────────────────────────────────
 
 async function getFailedRunLogs(prNumber, check) {
@@ -227,11 +350,25 @@ async function getFailedRunLogs(prNumber, check) {
   // GitHub Actions URLs look like: https://github.com/ORG/REPO/actions/runs/12345/job/67890
   const runIdMatch = (check.link || '').match(/\/actions\/runs\/(\d+)/);
   if (!runIdMatch) {
-    // Not a GitHub Actions run (could be an external CI) — try the check description
+    // Not a GitHub Actions run (could be an external CI)
+    // Try to fetch the actual web page for this check
+    const pageContent = await fetchWebPageContent(check.link);
+    if (pageContent && pageContent.length > 50) {
+      return { source: 'web-page', logs: `Check: ${check.name}\nURL: ${check.link}\n\n${pageContent}` };
+    }
     return { source: 'description', logs: check.description || 'No logs available (external check)' };
   }
 
   const runId = runIdMatch[1];
+
+  // First, try to get annotations (most concise and useful error info)
+  const annotations = await getRunAnnotations(runId);
+  let annotationLogs = '';
+  if (annotations.length > 0) {
+    annotationLogs = '\n═══ Annotations ═══\n' + annotations.map(a =>
+      `[${a.annotation_level}] ${a.path || ''}${a.start_line ? `:${a.start_line}` : ''} — ${a.title || ''}\n${a.message}`
+    ).join('\n\n');
+  }
 
   // Get the failed jobs for this run
   const jobsResult = await runCommand(
@@ -245,7 +382,17 @@ async function getFailedRunLogs(prNumber, check) {
       `gh run view ${runId} --log-failed 2>&1 | tail -200`,
       REPO_ROOT
     );
-    return { source: 'run-log', logs: logResult.stdout || logResult.stderr || 'No logs retrieved' };
+    let logs = logResult.stdout || logResult.stderr || 'No logs retrieved';
+
+    // If CLI logs are thin, try the web page
+    if (logs.trim().split('\n').length < 10) {
+      const pageContent = await fetchWebPageContent(check.link);
+      if (pageContent && pageContent.length > 100) {
+        logs += '\n\n═══ Web Page Content ═══\n' + pageContent;
+      }
+    }
+
+    return { source: 'run-log', logs: annotationLogs + '\n' + logs };
   }
 
   // Parse failed jobs and get their logs
@@ -271,10 +418,21 @@ async function getFailedRunLogs(prNumber, check) {
       `gh run view ${runId} --log-failed 2>&1 | tail -300`,
       REPO_ROOT
     );
-    return { source: 'run-log-fallback', logs: fallbackLog.stdout || fallbackLog.stderr || 'No logs retrieved' };
+    let logs = fallbackLog.stdout || fallbackLog.stderr || 'No logs retrieved';
+
+    // Supplement with web page if logs are sparse
+    if (logs.trim().split('\n').length < 10) {
+      const pageContent = await fetchWebPageContent(check.link);
+      if (pageContent && pageContent.length > 100) {
+        logs += '\n\n═══ Web Page Content ═══\n' + pageContent;
+      }
+    }
+
+    return { source: 'run-log-fallback', logs: annotationLogs + '\n' + logs };
   }
 
-  return { source: 'job-logs', logs: allLogs.join('\n') };
+  // Append annotation summaries to job logs
+  return { source: 'job-logs', logs: annotationLogs + allLogs.join('\n') };
 }
 
 // ─── Fix a failing PR ───────────────────────────────────────────────────────
@@ -357,7 +515,7 @@ RULES:
   try {
     console.log(chalk.gray('  Analyzing failures with AI...'));
     const response = await client.chat.completions.create({
-      model: 'gpt-4o',
+      model: 'gpt-5.2-2025-12-11',
       messages,
       temperature: 0,
       max_tokens: 4096,
@@ -548,7 +706,7 @@ async function fixFromComments(pr, commentData) {
   const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
   const triageResponse = await client.chat.completions.create({
-    model: 'gpt-4o',
+    model: 'gpt-5.2-2025-12-11',
     temperature: 0,
     max_tokens: 2048,
     messages: [

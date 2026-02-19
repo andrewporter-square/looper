@@ -73,6 +73,62 @@ const PR_CHECKLIST = [
 // Paths that should never be processed by the fixer agents
 const SKIP_PATH_PATTERNS = /^(\.hermit|node_modules|dist|build|\.next|\.git|\.yarn|coverage|storybook)[\/]/;
 
+// Generate a detailed PR explanation by sending the diff to the LLM
+async function generatePRExplanation(baseBranch, headRef, changedFiles) {
+  console.log(chalk.yellow(`  Generating detailed PR explanation from diff...`));
+  try {
+    // Get the full diff
+    const diffResult = await runCommand(
+      `git diff origin/${baseBranch}...${headRef} -- ${changedFiles.map(f => `"${f}"`).join(' ')}`,
+      REPO_ROOT
+    );
+    const diff = (diffResult.stdout || '').slice(0, 60000); // cap to avoid token overflow
+    if (!diff.trim()) {
+      console.log(chalk.dim(`  No diff found, skipping explanation generation.`));
+      return null;
+    }
+
+    const explanationResponse = await client.chat.completions.create({
+      model: 'gpt-5.2-2025-12-11',
+      messages: [
+        {
+          role: 'system',
+          content: [
+            'You are a senior software engineer writing a pull request description.',
+            'Given a git diff, produce a detailed explanation of WHAT changed and WHY those changes are justified.',
+            'Structure your answer with these sections:',
+            '',
+            '### Detailed Explanation',
+            'For each file, describe what was changed and the reasoning.',
+            '',
+            '### Why These Changes Are Justified',
+            'Explain the correctness guarantees, safety, and benefits.',
+            '',
+            'Be specific — reference actual variable names, enum values, translation keys, and code patterns.',
+            'Do NOT include a summary line or title — just the two sections above.',
+            'Use markdown formatting.',
+          ].join('\n'),
+        },
+        {
+          role: 'user',
+          content: `Here is the diff:\n\n${diff}`,
+        },
+      ],
+      max_tokens: 3000,
+    });
+
+    const explanation = explanationResponse.choices?.[0]?.message?.content?.trim();
+    if (explanation) {
+      console.log(chalk.green(`  ✅ PR explanation generated (${explanation.length} chars).`));
+      return explanation;
+    }
+    return null;
+  } catch (err) {
+    console.log(chalk.yellow(`  ⚠️ Failed to generate PR explanation: ${err.message}`));
+    return null;
+  }
+}
+
 async function fixLintErrorsForFile(relativePath) {
   const fullPath = path.join(REPO_ROOT, relativePath);
   
@@ -298,8 +354,8 @@ TOOLS AVAILABLE:
               const searchTerms = [fileName, dirName, `${dirName}/${fileName}`];
               const matchedSections = [];
               for (const term of searchTerms) {
-                  // Look for "### File N: ...term..." sections
-                  const regex = new RegExp(`### File \\d+:.*${term.replace(/[.*+?^${}()|[\]\\\\]/g, '\\\\$&')}[^#]*`, 'gi');
+                  // Look for "### File N: ...term..." or "### Verified: ...term..." sections
+                  const regex = new RegExp(`###\\s+(?:File \\d+:|Verified:).*${term.replace(/[.*+?^${}()|[\]\\\\]/g, '\\\\$&')}[^#]*`, 'gi');
                   const matches = researchDoc.match(regex);
                   if (matches) {
                       for (const m of matches) {
@@ -1307,6 +1363,10 @@ async function runTestFixer() {
                  ? prParts[1] : 'core';
              
              const prTitle = `feat(${prScope}): automated lint, type, and test fixes`;
+
+             // Generate detailed explanation from diff
+             const detailedExplanation = await generatePRExplanation(MAIN_BRANCH, 'HEAD', changedFiles);
+
              const prBody = [
                  `## Summary`,
                  ``,
@@ -1327,6 +1387,8 @@ async function runTestFixer() {
                  `- Pruned obsolete eslint suppressions`,
                  `- Preserved all existing runtime behavior`,
                  ``,
+                 detailedExplanation ? detailedExplanation : '',
+                 detailedExplanation ? '' : null,
                  `## Testing`,
                  ``,
                  `- ESLint passes`,
@@ -1581,7 +1643,10 @@ async function runBatchFixer() {
     const prTitle = fileList.length === 1
         ? `feat(${appScope}): migrate ${fileBasenames[0]} to static i18n keys`
         : `feat(${appScope}): replace dynamic i18n keys with static keys`;
-    
+
+    // Generate detailed explanation from diff
+    const detailedExplanation = await generatePRExplanation(MAIN_BRANCH, 'HEAD', fileList);
+
     // Build PR description
     const prBody = [
         `## Summary`,
@@ -1602,12 +1667,14 @@ async function runBatchFixer() {
         `- Removed corresponding entries from \`eslint-suppressions.json\``,
         `- Preserved all existing runtime behavior — no logic changes`,
         ``,
+        detailedExplanation ? detailedExplanation : '',
+        detailedExplanation ? '' : null,
         `## Testing`,
         ``,
         `- ESLint passes with no \`@afterpay/i18n-only-static-keys\` violations`,
         `- All existing tests pass`,
         `- TypeScript type checking passes`,
-    ].join('\n') + PR_CHECKLIST;
+    ].filter(Boolean).join('\n') + PR_CHECKLIST;
     
     // Write PR body to temp file to avoid shell escaping issues
     const prBodyFile = path.join(__dirname, '.pr-body-temp.md');
@@ -1977,7 +2044,11 @@ async function runWorkerMode() {
     }
     console.log(`  Branch pushed successfully.`);
 
-    // 7. Create PR
+    // 7. Generate detailed PR explanation from diff
+    console.log(`  Generating detailed PR explanation...`);
+    const detailedExplanation = await generatePRExplanation(MAIN_BRANCH, 'HEAD', [workerFile]);
+
+    // 8. Create PR
     console.log(`  Creating Pull Request...`);
     const prTitle = `feat(${workerScope}): migrate ${workerComponent} to static i18n keys`;
     const prBody = [
@@ -1996,12 +2067,14 @@ async function runWorkerMode() {
       `- Removed corresponding entries from eslint-suppressions.json`,
       `- Preserved all existing runtime behavior`,
       ``,
+      detailedExplanation ? detailedExplanation : '',
+      detailedExplanation ? '' : null,
       `## Testing`,
       ``,
       `- ESLint passes`,
       `- Related tests pass (Jest + Vitest)`,
       `- TypeScript type checking passes`,
-    ].join('\n') + PR_CHECKLIST;
+    ].filter(Boolean).join('\n') + PR_CHECKLIST;
 
     const prBodyFile = path.join(__dirname, `.pr-body-${workerComponent}-${Date.now()}.md`);
     fs.writeFileSync(prBodyFile, prBody, 'utf8');
