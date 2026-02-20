@@ -225,6 +225,7 @@ async function fixLintErrorsForFile(relativePath) {
   const MAX_STEPS = 90;
   let step = 0;
   let isFixed = false;
+  let consecutiveNoToolCalls = 0;
 
   // Initial Lint
   // Use local binary to ensure specific file targeting
@@ -468,6 +469,7 @@ TOOLS AVAILABLE:
         }
 
         if (msg.tool_calls) {
+            consecutiveNoToolCalls = 0;
             for (const toolCall of msg.tool_calls) {
                 const fnName = toolCall.function.name;
                 const args = JSON.parse(toolCall.function.arguments);
@@ -525,6 +527,25 @@ TOOLS AVAILABLE:
                     content: result
                 });
             }
+        } else {
+            // Agent responded with text but no tool calls — may be stuck
+            consecutiveNoToolCalls++;
+            
+            // Check if agent is signaling the issue is unfixable
+            if (msg.content && /UNFIXABLE/i.test(msg.content)) {
+                console.log(chalk.yellow(`  ⚠️ Agent determined this issue is unfixable. Skipping.`));
+                break;
+            }
+            
+            if (consecutiveNoToolCalls >= 3) {
+                console.log(chalk.yellow(`  ⚠️ Agent is stuck (${consecutiveNoToolCalls} consecutive responses with no tool calls). Bailing out.`));
+                break;
+            }
+            // Nudge the agent to take action
+            messages.push({
+                role: 'user',
+                content: 'You must use tools to fix this. If the issue is an infrastructure/environment problem you cannot fix (e.g., Jest startup errors, missing dependencies, duplicate mocks), say "UNFIXABLE" in your response and I will skip this file. Otherwise, use write_file to apply your fix now.'
+            });
         }
     } catch (err) {
         console.error(chalk.red("Error in agent loop:"), err.message);
@@ -598,6 +619,7 @@ async function fixTypeErrorsForFile(relativePath, typeErrors) {
   const MAX_STEPS = 90;
   let step = 0;
   let isFixed = false;
+  let consecutiveNoToolCalls = 0;
 
   const initialFileContent = fs.readFileSync(fullPath, 'utf8');
 
@@ -697,6 +719,7 @@ TOOLS AVAILABLE:
         }
 
         if (msg.tool_calls) {
+            consecutiveNoToolCalls = 0;
             for (const toolCall of msg.tool_calls) {
                 const fnName = toolCall.function.name;
                 const args = JSON.parse(toolCall.function.arguments);
@@ -750,6 +773,24 @@ TOOLS AVAILABLE:
                     content: result
                 });
             }
+        } else {
+            // Agent responded with text but no tool calls — may be stuck
+            consecutiveNoToolCalls++;
+            
+            // Check if agent is signaling the issue is unfixable
+            if (msg.content && /UNFIXABLE/i.test(msg.content)) {
+                console.log(chalk.yellow(`  ⚠️ Agent determined this issue is unfixable. Skipping.`));
+                break;
+            }
+            
+            if (consecutiveNoToolCalls >= 3) {
+                console.log(chalk.yellow(`  ⚠️ Agent is stuck (${consecutiveNoToolCalls} consecutive responses with no tool calls). Bailing out.`));
+                break;
+            }
+            messages.push({
+                role: 'user',
+                content: 'You must use tools to fix this. If the issue is an infrastructure/environment problem you cannot fix, say "UNFIXABLE" in your response. Otherwise, use write_file to apply your fix now.'
+            });
         }
     } catch (err) {
         console.error(chalk.red("Error in agent loop:"), err.message);
@@ -820,11 +861,19 @@ async function fixTestErrorsForFile(relativePath, runner = 'jest') {
       return;
   }
 
-  // Check for vitest startup errors (environment issues, not test failures)
+  // Check for test runner startup errors (environment issues, not test failures)
   const testOutput = testResult.stdout + testResult.stderr;
   if (runner === 'vitest' && /Startup Error|failed to load config|ERR_REQUIRE_ESM/.test(testOutput)) {
       console.log(chalk.yellow(`  ⚠️ Vitest can't start (startup/config error). Skipping this file — not a test failure.`));
       console.log(chalk.dim(testOutput.slice(0, 500)));
+      return;
+  }
+
+  // Check for Jest startup/infrastructure errors (not actual test failures)
+  const jestStartupPatterns = /jest-haste-map:.*duplicate manual mock found|ENOSPC|out of memory|Cannot find module 'jest-|jest-config.*error|Could not locate module.*mapped as/i;
+  if (runner === 'jest' && jestStartupPatterns.test(testOutput)) {
+      console.log(chalk.yellow(`  ⚠️ Jest has a startup/infrastructure error (not a test failure). Skipping this file.`));
+      console.log(chalk.dim(testOutput.match(/jest-haste-map:.*|Error:.*|Cannot find.*/gm)?.slice(0, 5).join('\n') || testOutput.slice(0, 500)));
       return;
   }
 
@@ -879,6 +928,7 @@ async function fixTestErrorsForFile(relativePath, runner = 'jest') {
   const MAX_STEPS = 90;
   let step = 0;
   let isFixed = false;
+  let consecutiveNoToolCalls = 0; // Track stuck loops where agent just talks without acting
 
   const initialFileContent = fs.readFileSync(fullPath, 'utf8');
 
@@ -1050,6 +1100,7 @@ TOOLS AVAILABLE:
         }
 
         if (msg.tool_calls) {
+            consecutiveNoToolCalls = 0;
             for (const toolCall of msg.tool_calls) {
                 const fnName = toolCall.function.name;
                 const args = JSON.parse(toolCall.function.arguments);
@@ -1106,6 +1157,24 @@ TOOLS AVAILABLE:
                     content: result
                 });
             }
+        } else {
+            // Agent responded with text but no tool calls — may be stuck
+            consecutiveNoToolCalls++;
+            
+            // Check if agent is signaling the issue is unfixable
+            if (msg.content && /UNFIXABLE/i.test(msg.content)) {
+                console.log(chalk.yellow(`  ⚠️ Agent determined this issue is unfixable (infrastructure/environment problem). Skipping.`));
+                break;
+            }
+            
+            if (consecutiveNoToolCalls >= 3) {
+                console.log(chalk.yellow(`  ⚠️ Agent is stuck (${consecutiveNoToolCalls} consecutive responses with no tool calls). Bailing out.`));
+                break;
+            }
+            messages.push({
+                role: 'user',
+                content: 'You must use tools to fix this. If the issue is an infrastructure/environment problem you cannot fix (e.g., Jest startup errors, missing dependencies, duplicate mocks), say "UNFIXABLE" in your response and I will skip this file. Otherwise, use write_file to apply your fix now.'
+            });
         }
     } catch (err) {
         console.error(chalk.red("Error in agent loop:"), err.message);
