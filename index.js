@@ -848,16 +848,23 @@ async function fixTestErrorsForFile(relativePath, runner = 'jest') {
   // Using TZ="Australia/Melbourne" as per package.json patterns
   let testCommand = '';
   if (runner === 'vitest') {
-      testCommand = `yarn run test:vitest "${relativePath}"`;
+      testCommand = `yarn run test:vitest --run "${relativePath}"`;
   } else {
       testCommand = `TZ="Australia/Melbourne" npx jest --findRelatedTests "${relativePath}" --passWithNoTests`;
   }
 
-  console.log(chalk.yellow(`  Running tests...`));
+  console.log(chalk.yellow(`  Running tests: ${testCommand}`));
   let testResult = await runCommand(testCommand, REPO_ROOT);
 
   if (testResult.success) {
       console.log(chalk.green(`  ✅ Tests already pass for this file!`));
+      return;
+  }
+
+  // Log test output for debugging silent failures
+  const rawTestOutput = (testResult.stdout + testResult.stderr).trim();
+  if (!rawTestOutput) {
+      console.log(chalk.yellow(`  ⚠️ Test command produced no output. Possible hang or crash. Skipping.`));
       return;
   }
 
@@ -1322,7 +1329,7 @@ async function runTestFixer() {
 
      console.log(chalk.yellow(`  Running Vitest suite...`));
      // Use --reporter=json to get JSON output
-     const vitestCmd = `yarn run test:vitest --reporter=json --outputFile="${vitestOutputFile}"`;
+     const vitestCmd = `yarn run test:vitest --run --reporter=json --outputFile="${vitestOutputFile}"`;
      const vitestDiscoveryResult = await runCommand(vitestCmd, REPO_ROOT);
      const vitestDiscoveryOutput = vitestDiscoveryResult.stdout + vitestDiscoveryResult.stderr;
      const vitestStartupError = /Startup Error|failed to load config|ERR_REQUIRE_ESM/.test(vitestDiscoveryOutput);
@@ -1703,7 +1710,7 @@ async function runBatchFixer() {
     if (fs.existsSync(vitestOutputPath)) fs.unlinkSync(vitestOutputPath);
 
     console.log(chalk.yellow(`  Running Vitest suite...`));
-    const vitestCmd = `yarn run test:vitest --reporter=json --outputFile="${vitestOutputFile}"`;
+    const vitestCmd = `yarn run test:vitest --run --reporter=json --outputFile="${vitestOutputFile}"`;
     const vitestDiscoveryResult = await runCommand(vitestCmd, REPO_ROOT);
     const vitestDiscoveryOutput = vitestDiscoveryResult.stdout + vitestDiscoveryResult.stderr;
     const vitestStartupError = /Startup Error|failed to load config|ERR_REQUIRE_ESM/.test(vitestDiscoveryOutput);
