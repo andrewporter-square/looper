@@ -59,6 +59,70 @@ async function runCommand(command, cwd = process.cwd()) {
 // Whether we're running in batch mode (individual fixers should commit but not push)
 let BATCH_MODE = false;
 
+// Context window management: approximate token count and prune old messages if needed
+function estimateTokens(messages) {
+  let total = 0;
+  for (const msg of messages) {
+    if (typeof msg.content === 'string') {
+      total += Math.ceil(msg.content.length / 3.5); // rough chars-to-tokens ratio
+    }
+    if (msg.tool_calls) {
+      for (const tc of msg.tool_calls) {
+        total += Math.ceil((tc.function.arguments || '').length / 3.5);
+      }
+    }
+  }
+  return total;
+}
+
+function pruneMessages(messages, maxTokens = 100000) {
+  const estimated = estimateTokens(messages);
+  if (estimated <= maxTokens) return messages;
+  
+  console.log(chalk.yellow(`  ⚠️ Context window getting large (~${estimated} tokens). Pruning old messages...`));
+  
+  // Always keep: system prompt (index 0), initial user message (index 1), last 20 messages
+  const systemMsg = messages[0];
+  const initialUserMsg = messages[1];
+  const recentMessages = messages.slice(-20);
+  
+  // Create a summary of what was tried
+  const midMessages = messages.slice(2, -20);
+  let attemptSummary = [];
+  let writeCount = 0;
+  let failCount = 0;
+  
+  for (const msg of midMessages) {
+    if (msg.role === 'tool' && typeof msg.content === 'string') {
+      if (msg.content.startsWith('SUCCESS')) {
+        attemptSummary.push('- A write_file attempt SUCCEEDED');
+      } else if (msg.content.startsWith('FAILURE')) {
+        failCount++;
+        // Keep the last failure's errors for context
+        const errorSnippet = msg.content.slice(0, 500);
+        attemptSummary.push(`- write_file attempt ${failCount} FAILED: ${errorSnippet}`);
+      }
+    }
+    if (msg.role === 'assistant' && msg.tool_calls) {
+      for (const tc of msg.tool_calls) {
+        if (tc.function.name === 'write_file') writeCount++;
+      }
+    }
+  }
+  
+  const summaryMsg = {
+    role: 'user',
+    content: `[CONTEXT PRUNED — Previous ${midMessages.length} messages summarized]\n` +
+      `You have made ${writeCount} write_file attempts so far, ${failCount} failed.\n` +
+      (attemptSummary.length > 0 ? `Summary of attempts:\n${attemptSummary.slice(-10).join('\n')}\n` : '') +
+      `Continue fixing from where you left off. Read the remaining errors carefully and try a different approach.`
+  };
+  
+  const pruned = [systemMsg, initialUserMsg, summaryMsg, ...recentMessages];
+  console.log(chalk.dim(`  Pruned from ${messages.length} to ${pruned.length} messages (~${estimateTokens(pruned)} tokens).`));
+  return pruned;
+}
+
 // PR checklist appended to every PR description
 const PR_CHECKLIST = [
   '',
@@ -158,7 +222,7 @@ async function fixLintErrorsForFile(relativePath) {
   }
 
   // 3. Agentic Loop for Fixing
-  const MAX_STEPS = 50;
+  const MAX_STEPS = 90;
   let step = 0;
   let isFixed = false;
 
@@ -196,7 +260,7 @@ async function fixLintErrorsForFile(relativePath) {
   }
 
   // Agent System Prompt
-  const messages = [
+  let messages = [
     {
       role: "system",
       content: `You are a Senior Software Engineer specializing in fixing ESLint errors in a large TypeScript/React monorepo.
@@ -326,10 +390,11 @@ RESEARCH AND VERIFY:
 7. The SIMPLEST correct fix for t(\`namespace:\${variable}:suffix\`) is a switch/Record where each case uses the SAME key pattern with the variable replaced by its literal value from the locale JSON.
 
 TOOLS AVAILABLE:
-- read_file: Read any file (use to inspect types, imports, configs, .eslintrc)
+- read_file: Read any file (use to inspect types, imports, configs, .eslintrc). Supports startLine/endLine for reading specific ranges of large files.
 - write_file: Write complete file content (triggers automatic lint re-run)
 - list_files: List directory contents
-- run_command: Run shell commands
+- search_files: Search for a text/regex pattern across files — use this to find type definitions, enum values, translation keys, or imports
+- run_command: Run shell commands (runs in repo root with correct env)
 `
     },
     {
@@ -378,6 +443,9 @@ TOOLS AVAILABLE:
     console.log(chalk.gray(`\n  Step ${step}/${MAX_STEPS} (Thinking/Researching)...`));
 
     try {
+        // Prune context if it's getting too large
+        messages = pruneMessages(messages);
+
         const timer = setInterval(() => {
           process.stdout.write(chalk.gray('.'));
         }, 1000);
@@ -527,7 +595,7 @@ async function fixTypeErrorsForFile(relativePath, typeErrors) {
       }
   }
 
-  const MAX_STEPS = 50;
+  const MAX_STEPS = 90;
   let step = 0;
   let isFixed = false;
 
@@ -540,7 +608,7 @@ async function fixTypeErrorsForFile(relativePath, typeErrors) {
   // Find related type definition files mentioned in errors
   const typeHints = typeErrors.match(/type '([^']+)'/gi) || [];
 
-  const messages = [
+  let messages = [
     {
       role: "system",
       content: `You are a Senior Software Engineer specializing in fixing TypeScript type errors in a large TypeScript/React monorepo.
@@ -579,10 +647,11 @@ COMMON TS ERROR PATTERNS:
 - TS7006 "implicitly has 'any' type": Add explicit type annotation.
 
 TOOLS AVAILABLE:
-- read_file: Read any file (use to inspect type definitions, imported modules, interfaces)
+- read_file: Read any file (use to inspect type definitions, imported modules, interfaces). Supports startLine/endLine for reading specific ranges.
 - write_file: Write complete file content (triggers automatic tsc re-check)
 - list_files: List directory contents
-- run_command: Run shell commands (e.g., grep for type definitions)
+- search_files: Search for a text/regex pattern across files — find type definitions, imports, enum values
+- run_command: Run shell commands in repo root (e.g., git log, grep)
 `
     },
     {
@@ -603,6 +672,9 @@ TOOLS AVAILABLE:
     console.log(chalk.gray(`\n  Step ${step}/${MAX_STEPS} (Thinking/Researching)...`));
 
     try {
+        // Prune context if it's getting too large
+        messages = pruneMessages(messages);
+
         const timer = setInterval(() => {
           process.stdout.write(chalk.gray('.'));
         }, 1000);
@@ -758,8 +830,53 @@ async function fixTestErrorsForFile(relativePath, runner = 'jest') {
 
   console.log(chalk.red(`  ❌ Tests failed.`));
 
+  // --- Snapshot mismatch detection ---
+  // If tests failed ONLY because of snapshot mismatches, auto-update instead of entering the agent loop.
+  const failOutput = testResult.stdout + testResult.stderr;
+  const snapshotMismatchCount = (failOutput.match(/›\s*\d+ snapshot[s]? failed/gi) || []).length
+      + (failOutput.match(/Snapshot .* mismatched/gi) || []).length
+      + (failOutput.match(/Snapshots:\s+\d+ failed/gi) || []).length;
+  const hasNonSnapshotFailures = /FAIL.*\n.*●.*(?!.*snapshot)/i.test(failOutput) 
+      || /AssertionError|TypeError|ReferenceError|expect\(.*\)\.to/.test(failOutput);
+  
+  if (snapshotMismatchCount > 0 && !hasNonSnapshotFailures) {
+      console.log(chalk.yellow(`  📸 Detected snapshot-only failures. Attempting auto-update...`));
+      
+      let updateCommand = '';
+      if (runner === 'vitest') {
+          updateCommand = `yarn run test:vitest "${relativePath}" --update`;
+      } else {
+          updateCommand = `TZ="Australia/Melbourne" npx jest --findRelatedTests "${relativePath}" --passWithNoTests --updateSnapshot`;
+      }
+      
+      const updateResult = await runCommand(updateCommand, REPO_ROOT);
+      if (updateResult.success) {
+          console.log(chalk.bold.green(`  ✅ Snapshots updated successfully!`));
+          
+          // Commit the snapshot updates
+          await runCommand(`git add .`, REPO_ROOT);
+          await runCommand(`git checkout HEAD -- package.json yarn.lock 2>/dev/null || true`, REPO_ROOT);
+          const snapshotParts = relativePath.split('/');
+          const snapshotScope = (snapshotParts.length >= 2 && ['apps', 'libs', 'packages'].includes(snapshotParts[0]))
+              ? snapshotParts[1] : 'core';
+          const snapshotComponent = path.basename(relativePath, path.extname(relativePath)).replace(/\.(?:test|spec|vitest)$/, '');
+          await runCommand(`git commit --no-verify -m "fix(${snapshotScope}): update snapshots for ${snapshotComponent}" -m "Auto-updated snapshots to match current source output."`, REPO_ROOT);
+          
+          if (!BATCH_MODE) {
+              const branchCheck = await runCommand(`git branch --show-current`, REPO_ROOT);
+              const currentBranch = branchCheck.stdout.trim();
+              if (currentBranch && currentBranch !== MAIN_BRANCH && currentBranch !== 'main') {
+                  await runCommand(`git push --no-verify origin HEAD:refs/heads/${currentBranch}`, REPO_ROOT);
+              }
+          }
+          return; // Done — no agent loop needed
+      } else {
+          console.log(chalk.yellow(`  ⚠️ Snapshot update failed, falling back to agent loop.`));
+      }
+  }
+
   // 3. Agentic Loop for Fixing
-  const MAX_STEPS = 50;
+  const MAX_STEPS = 90;
   let step = 0;
   let isFixed = false;
 
@@ -835,7 +952,7 @@ async function fixTestErrorsForFile(relativePath, runner = 'jest') {
   ].filter(Boolean).join('\n');
 
   // Agent System Prompt
-  const messages = [
+  let messages = [
     {
       role: "system",
       content: `You are a Senior Software Engineer specializing in debugging test failures in a large TypeScript/React monorepo.
@@ -882,10 +999,11 @@ COMMON PATTERNS:
 - Type narrowing or guard conditions modified
 
 TOOLS AVAILABLE:
-- read_file: Read any file in the repo (use to inspect source, types, utils)
+- read_file: Read any file in the repo (use to inspect source, types, utils). Supports startLine/endLine for reading specific ranges.
 - write_file: Write complete file content (triggers automatic test re-run)
 - list_files: List directory contents
-- run_command: Run shell commands (git log, grep, find, etc.)
+- search_files: Search for a text/regex pattern across files — find related implementations, type definitions, usages
+- run_command: Run shell commands in repo root (git log, grep, find, etc.)
 `
     },
     {
@@ -907,6 +1025,9 @@ TOOLS AVAILABLE:
     console.log(chalk.gray(`\n  Step ${step}/${MAX_STEPS} (Thinking)...`));
 
     try {
+        // Prune context if it's getting too large
+        messages = pruneMessages(messages);
+
         const timer = setInterval(() => {
           process.stdout.write(chalk.gray('.'));
         }, 1000);
@@ -1024,13 +1145,26 @@ TOOLS AVAILABLE:
     console.log(chalk.green(`  Done with ${relativePath}`));
   } else {
     console.log(chalk.bold.red(`  ⚠️ Failed to fix tests for ${relativePath} after ${MAX_STEPS} steps.`));
-    console.log(chalk.blue(`  Discarding changes to ${relativePath}...`));
-    await runCommand(`git checkout HEAD "${relativePath}"`, REPO_ROOT); 
+    console.log(chalk.blue(`  Discarding ALL uncommitted changes...`));
+    // Revert all uncommitted changes — the agent may have modified source files, not just the test
+    await runCommand(`git checkout HEAD -- .`, REPO_ROOT);
+    // Also remove any untracked files the agent may have created
+    await runCommand(`git clean -fd -- "${path.dirname(relativePath)}" 2>/dev/null || true`, REPO_ROOT);
   }
 }
 
 async function runTestFixer() {
   console.log(chalk.bold.magenta("🚀 Starting Auto-Test & Lint Fixer..."));
+
+  // Pre-flight: ensure clean working tree
+  const preflightStatus = await runCommand(`git status --porcelain`, REPO_ROOT);
+  const dirty = preflightStatus.stdout.trim();
+  if (dirty) {
+      console.log(chalk.yellow(`  ⚠️ Working tree is dirty. Stashing changes before starting...`));
+      console.log(chalk.dim(dirty));
+      await runCommand(`git stash push -m "looper-autofix-preflight-${Date.now()}"`, REPO_ROOT);
+      console.log(chalk.green(`  ✅ Changes stashed.`));
+  }
   
   try {
      // 0. Ensure we're not on master — create a branch if needed
@@ -1426,6 +1560,16 @@ async function runBatchFixer() {
   BATCH_MODE = true;
   
   try {
+    // Pre-flight: ensure clean working tree
+    const preflightStatus = await runCommand(`git status --porcelain`, REPO_ROOT);
+    const dirty = preflightStatus.stdout.trim();
+    if (dirty) {
+        console.log(chalk.yellow(`  ⚠️ Working tree is dirty. Stashing changes before starting...`));
+        console.log(chalk.dim(dirty));
+        await runCommand(`git stash push -m "looper-batch-preflight-${Date.now()}"`, REPO_ROOT);
+        console.log(chalk.green(`  ✅ Changes stashed. Will NOT auto-restore — run 'git stash pop' manually if needed.`));
+    }
+
     const listPath = path.resolve(__dirname, 'list.json');
     if (!fs.existsSync(listPath)) {
         console.error(chalk.red("list.json not found!"));
@@ -1607,6 +1751,61 @@ async function runBatchFixer() {
         console.log(chalk.blue(`  Suppressions file changed, will be included in final commit.`));
     } else {
         console.log(chalk.bold.green(`  ✅ No obsolete suppressions found.`));
+    }
+
+    // --- FINAL VALIDATION CASCADE ---
+    // Re-run all checks to catch cross-phase regressions (e.g., type fix broke lint, test fix broke types)
+    console.log(chalk.bold.yellow(`\n  🔄 Running Final Validation Cascade...`));
+    
+    const cascadeChangedResult = await runCommand(`git diff --name-only origin/${MAIN_BRANCH} | grep -E '\\.tsx?$'`, REPO_ROOT);
+    const cascadeFiles = cascadeChangedResult.stdout.trim().split('\n').filter(Boolean);
+    let cascadeClean = true;
+    
+    if (cascadeFiles.length > 0) {
+        // Re-check lint on all changed files
+        const eslintBinCascade = path.join('node_modules', '.bin', 'eslint');
+        for (const f of cascadeFiles) {
+            if (SKIP_PATH_PATTERNS.test(f)) continue;
+            const lintCheck = await runCommand(`${eslintBinCascade} "${f}" --quiet`, REPO_ROOT);
+            if (!lintCheck.success) {
+                console.log(chalk.red(`  ❌ Lint regression in ${f} — re-fixing...`));
+                cascadeClean = false;
+                await fixLintErrorsForFile(f);
+            }
+        }
+        
+        // Re-check types on changed files
+        const cascadeAppDirs = new Map();
+        for (const f of cascadeFiles) {
+            const parts = f.split('/');
+            if (parts.length >= 2) {
+                const appDir = parts.slice(0, 2).join('/');
+                const tsconfigPath = path.join(REPO_ROOT, appDir, 'tsconfig.json');
+                if (fs.existsSync(tsconfigPath)) {
+                    if (!cascadeAppDirs.has(appDir)) cascadeAppDirs.set(appDir, []);
+                    cascadeAppDirs.get(appDir).push(f);
+                }
+            }
+        }
+        for (const [appDir, files] of cascadeAppDirs) {
+            const tscCheck = await runCommand(`npx tsc --noEmit --pretty false`, path.join(REPO_ROOT, appDir));
+            const tscOut = tscCheck.stdout + tscCheck.stderr;
+            for (const f of files) {
+                const relToApp = f.replace(`${appDir}/`, '');
+                const errs = tscOut.split('\n').filter(line => line.includes(relToApp) && line.includes('error TS'));
+                if (errs.length > 0) {
+                    console.log(chalk.red(`  ❌ Type regression in ${f} — re-fixing...`));
+                    cascadeClean = false;
+                    await fixTypeErrorsForFile(f, errs.join('\n'));
+                }
+            }
+        }
+    }
+    
+    if (cascadeClean) {
+        console.log(chalk.bold.green(`  ✅ Final validation passed — no regressions detected.`));
+    } else {
+        console.log(chalk.yellow(`  ⚠️ Found and attempted to fix regressions from cross-phase changes.`));
     }
 
     // Final commit & push for any remaining uncommitted changes
@@ -2141,26 +2340,82 @@ const tools = {
       type: 'function',
       function: {
         name: 'read_file',
-        description: 'Read the contents of a file. Use this to inspect code, logs, or config.',
+        description: 'Read the contents of a file. Optionally specify startLine/endLine to read a range (1-indexed). Use this to inspect code, logs, or config without loading huge files entirely.',
         parameters: {
           type: 'object',
           properties: {
             path: {
               type: 'string',
               description: 'The path of the file to read'
+            },
+            startLine: {
+              type: 'number',
+              description: 'Optional 1-indexed start line (inclusive). Omit to read from beginning.'
+            },
+            endLine: {
+              type: 'number',
+              description: 'Optional 1-indexed end line (inclusive). Omit to read to end.'
             }
           },
           required: ['path']
         }
       }
     },
-    handler: async ({ path: filePath }) => {
+    handler: async ({ path: filePath, startLine, endLine }) => {
       try {
         const content = fs.readFileSync(filePath, 'utf8');
+        if (startLine || endLine) {
+          const lines = content.split('\n');
+          const start = Math.max(1, startLine || 1) - 1;
+          const end = Math.min(lines.length, endLine || lines.length);
+          const slice = lines.slice(start, end);
+          return `[Lines ${start + 1}-${end} of ${lines.length}]\n${slice.join('\n')}`;
+        }
         return content;
       } catch (error) {
         return `Error reading file: ${error.message}`;
       }
+    }
+  },
+  search_files: {
+    definition: {
+      type: 'function',
+      function: {
+        name: 'search_files',
+        description: 'Search for a text pattern (regex or plain text) across files in the repo. Returns matching lines with file paths and line numbers. Useful for finding type definitions, imports, usages, or translation keys.',
+        parameters: {
+          type: 'object',
+          properties: {
+            pattern: {
+              type: 'string',
+              description: 'The text or regex pattern to search for'
+            },
+            path: {
+              type: 'string',
+              description: 'Optional directory or file to search within (defaults to repo root)'
+            },
+            filePattern: {
+              type: 'string',
+              description: 'Optional glob to filter files, e.g. "*.tsx" or "*.json" (passed to grep --include)'
+            }
+          },
+          required: ['pattern']
+        }
+      }
+    },
+    handler: async ({ pattern, path: searchPath, filePattern }) => {
+      const dir = searchPath || REPO_ROOT;
+      const includeFlag = filePattern ? `--include="${filePattern}"` : '';
+      const cmd = `grep -rn ${includeFlag} --max-count=50 -E ${JSON.stringify(pattern)} "${dir}" 2>/dev/null | head -80`;
+      return new Promise((resolve) => {
+        exec(cmd, { timeout: 30000, maxBuffer: 1024 * 1024 * 5, env: REPO_ENV }, (error, stdout, stderr) => {
+          if (stdout && stdout.trim()) {
+            resolve(stdout.trim().slice(0, 10000));
+          } else {
+            resolve(`No matches found for pattern: ${pattern}`);
+          }
+        });
+      });
     }
   },
   write_file: {
@@ -2208,29 +2463,34 @@ const tools = {
       type: 'function',
       function: {
         name: 'run_command',
-        description: 'Execute a shell command (e.g., git, npm, ls, cat). Non-interactive only.',
+        description: 'Execute a shell command in the repo root (e.g., git, npm, ls, cat, grep). Non-interactive only. Commands run with the correct Hermit/Node environment.',
         parameters: {
           type: 'object',
           properties: {
             command: {
               type: 'string',
               description: 'The command to execute'
+            },
+            cwd: {
+              type: 'string',
+              description: 'Optional working directory (defaults to repo root)'
             }
           },
           required: ['command']
         }
       }
     },
-    handler: async ({ command }) => {
-      console.log(chalk.yellow(`  Running: ${command}`));
+    handler: async ({ command, cwd }) => {
+      const workDir = cwd || REPO_ROOT;
+      console.log(chalk.yellow(`  Running: ${command} in ${workDir}`));
       return new Promise((resolve) => {
-        exec(command, { timeout: 60000, maxBuffer: 1024 * 1024 * 10 }, (error, stdout, stderr) => {
+        exec(command, { cwd: workDir, timeout: 300000, maxBuffer: 1024 * 1024 * 10, env: REPO_ENV }, (error, stdout, stderr) => {
           const output = (stdout || '') + (stderr ? `\nSTDERR:\n${stderr}` : '');
           if (error) {
-            const errorMsg = error.killed ? 'Command Timed Out (60s).' : error.message;
-            resolve(`Command Failed.\nError: ${errorMsg}\nOutput: ${output.slice(0, 4000)}`);
+            const errorMsg = error.killed ? 'Command Timed Out (300s).' : error.message;
+            resolve(`Command Failed.\nError: ${errorMsg}\nOutput: ${output.slice(0, 8000)}`);
           } else {
-            resolve(output.slice(0, 8000) + (output.length > 8000 ? '\n...(output truncated)' : ''));
+            resolve(output.slice(0, 15000) + (output.length > 15000 ? '\n...(output truncated)' : ''));
           }
         });
       });

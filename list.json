@@ -1,6 +1,3 @@
 [
-  "apps/checkout/src/component/PostCheckout/PostCheckout.tsx",
-  "apps/checkout/src/component/TerminalError/TerminalError.tsx",
-  "apps/checkout/src/page/summary-pay-monthly/PayMonthlySummary.tsx",
-  "apps/checkout/src/component/CardEducation/CardEducation.tsx"
+  "apps/checkout/src/page/oh-no-error/OhNoError.tsx"
 ]
