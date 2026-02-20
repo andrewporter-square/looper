@@ -1,358 +1,41 @@
+
+[1] stderr | apps/checkout/src/component/VerifyRetry/VerifyRetry.vitest.tsx > VerifyRetry component > validation > should show min dob error message
+[1] [@googlemaps/js-api-loader] The setOptions() function should only be called once. The options passed to the additional call ({"key":"googlemaps","v":"quarterly","libraries":["places"]}) will be ignored.
 [1]
-[1] ⎯⎯⎯⎯⎯⎯ Failed Tests 11 ⎯⎯⎯⎯⎯⎯⎯
-[1]
-[1]  FAIL  apps/checkout/src/component/Asset/GiftCard.vitest.tsx > GiftCard Asset layout Component > should match snapshot if push notification is subscribed
-[1] Error: Snapshot `GiftCard Asset layout Component > should match snapshot if push notification is subscribed 1` mismatched
-[1]
-[1] - Expected
-[1] + Received
-[1]
-[1] @@ -22,13 +22,11 @@
-[1]     >
-[1]       <h2
-[1]         class="text heading sizeM bold"
-[1]         data-testid="post-checkout-subtitle-heading"
-[1]       >
-[1] -       postcheckout:asset:ap-gift-card-202306.subtitle__A-PRE_CAPTURE
-[1] +       postcheckout:asset:ap-asset-202303.subtitle__B-PRE_CAPTURE
-[1] -       postcheckout:asset:ap-gift-card-202306.subtitle__A
-[1] -       postcheckout:asset:ap-gift-card-202306.subtitle
-[1]       </h2>
-[1]     </div>
-[1]     <div
-[1]       class="assetPaddedCard assetPaddingSmall"
-[1]     >
-[1]
-[1]  ❯ apps/checkout/src/component/Asset/GiftCard.vitest.tsx:68:23
-[1]      66|   it('should match snapshot if push notification is subscribed', () =>...
-[1]      67|     const { container } = render(<GiftCard actioned={false} assetId={A...
-[1]      68|     expect(container).toMatchSnapshot()
-[1]        |                       ^
-[1]      69|   })
-[1]      70| 
-[1]
-[1] ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/11]⎯
-[1]
-[1]  FAIL  apps/checkout/src/component/Asset/GiftCard.vitest.tsx > GiftCard Asset layout Component > should match snapshot if push notification is not subscribed
-[1] Error: Snapshot `GiftCard Asset layout Component > should match snapshot if push notification is not subscribed 1` mismatched
-[1]
-[1] - Expected
-[1] + Received
-[1]
-[1] @@ -22,13 +22,11 @@
-[1]     >
-[1]       <h2
-[1]         class="text heading sizeM bold"
-[1]         data-testid="post-checkout-subtitle-heading"
-[1]       >
-[1] -       postcheckout:asset:ap-gift-card-202306.subtitle__A-PRE_CAPTURE
-[1] +       postcheckout:asset:ap-asset-202303.subtitle__B-PRE_CAPTURE
-[1] -       postcheckout:asset:ap-gift-card-202306.subtitle__A
-[1] -       postcheckout:asset:ap-gift-card-202306.subtitle
-[1]       </h2>
-[1]     </div>
-[1]     <div
-[1]       class="assetPaddedCard assetPaddingSmall"
-[1]     >
-[1]
-[1]  ❯ apps/checkout/src/component/Asset/GiftCard.vitest.tsx:78:23
-[1]      76|     })
-[1]      77|     const { container } = render(<GiftCard actioned={false} assetId={A...
-[1]      78|     expect(container).toMatchSnapshot()
-[1]        |                       ^
-[1]      79|   })
-[1]      80| 
-[1]
-[1] ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/11]⎯
-[1]
-[1]  FAIL  apps/checkout/src/component/Asset/MarketingOptIn.vitest.tsx > Marketing Opt In Asset layout Component > should match snapshot if status is unsubscribed
-[1] Error: Snapshot `Marketing Opt In Asset layout Component > should match snapshot if status is unsubscribed 1` mismatched
-[1]
-[1] - Expected
-[1] + Received
-[1]
-[1] @@ -22,13 +22,11 @@
-[1]     >
-[1]       <h2
-[1]         class="text heading sizeM bold"
-[1]         data-testid="post-checkout-subtitle-heading"
-[1]       >
-[1] -       postcheckout:asset:ap-marketing-opt-in-202308.subtitle__A-PRE_CAPTURE
-[1] +       postcheckout:asset:ap-asset-202303.subtitle__B-PRE_CAPTURE
-[1] -       postcheckout:asset:ap-marketing-opt-in-202308.subtitle__A
-[1] -       postcheckout:asset:ap-marketing-opt-in-202308.subtitle
-[1]       </h2>
-[1]     </div>
-[1]     <div
-[1]       class="assetPaddedCard assetPaddingSmall"
-[1]       data-testid="marketing-opt-in-card"
-[1]
-[1]  ❯ apps/checkout/src/component/Asset/MarketingOptIn.vitest.tsx:99:23
-[1]      97|       />
-[1]      98|     )
-[1]      99|     expect(container).toMatchSnapshot()
-[1]        |                       ^
-[1]     100|   })
-[1]     101| 
-[1]
-[1] ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/11]⎯
-[1]
-[1]  FAIL  apps/checkout/src/component/Asset/MarketingOptIn.vitest.tsx > Marketing Opt In Asset layout Component > should match snapshot if status is undecided
-[1] Error: Snapshot `Marketing Opt In Asset layout Component > should match snapshot if status is undecided 1` mismatched
-[1]
-[1] - Expected
-[1] + Received
-[1]
-[1] @@ -22,13 +22,11 @@
-[1]     >
-[1]       <h2
-[1]         class="text heading sizeM bold"
-[1]         data-testid="post-checkout-subtitle-heading"
-[1]       >
-[1] -       postcheckout:asset:ap-marketing-opt-in-202308.subtitle__A-PRE_CAPTURE
-[1] +       postcheckout:asset:ap-asset-202303.subtitle__B-PRE_CAPTURE
-[1] -       postcheckout:asset:ap-marketing-opt-in-202308.subtitle__A
-[1] -       postcheckout:asset:ap-marketing-opt-in-202308.subtitle
-[1]       </h2>
-[1]     </div>
-[1]     <div
-[1]       class="assetPaddedCard assetPaddingSmall"
-[1]       data-testid="marketing-opt-in-card"
-[1]
-[1]  ❯ apps/checkout/src/component/Asset/MarketingOptIn.vitest.tsx:109:23
-[1]     107|     })
-[1]     108|     const { container } = render(<MarketingOptIn actioned={false} asse...
-[1]     109|     expect(container).toMatchSnapshot()
-[1]        |                       ^
-[1]     110|   })
-[1]     111| 
-[1]
-[1] ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/11]⎯
-[1]
-[1]  FAIL  apps/checkout/src/component/Asset/MarketingOptIn.vitest.tsx > Marketing Opt In Asset layout Component > should render CTA buttons as radio type when experiment value is B
-[1] Error: Snapshot `Marketing Opt In Asset layout Component > should render CTA buttons as radio type when experiment value is B 1` mismatched
-[1]
-[1] - Expected
-[1] + Received
-[1]
-[1] @@ -22,13 +22,11 @@
-[1]     >
-[1]       <h2
-[1]         class="text heading sizeM bold"
-[1]         data-testid="post-checkout-subtitle-heading"
-[1]       >
-[1] -       postcheckout:asset:ap-marketing-opt-in-202308.subtitle__B-PRE_CAPTURE
-[1] +       postcheckout:asset:ap-asset-202303.subtitle__B-PRE_CAPTURE
-[1] -       postcheckout:asset:ap-marketing-opt-in-202308.subtitle__B
-[1] -       postcheckout:asset:ap-marketing-opt-in-202308.subtitle
-[1]       </h2>
-[1]     </div>
-[1]     <div
-[1]       class="assetPaddedCard assetPaddingSmall"
-[1]       data-testid="marketing-opt-in-card"
-[1]
-[1]  ❯ apps/checkout/src/component/Asset/MarketingOptIn.vitest.tsx:183:23
-[1]     181|     )
-[1]     182| 
-[1]     183|     expect(container).toMatchSnapshot()
-[1]        |                       ^
-[1]     184|     expect(mocks.CallToAction).toHaveBeenCalledWith(expect.objectConta...
-[1]     185|   })
-[1]
-[1] ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/11]⎯
-[1]
-[1]  FAIL  apps/checkout/src/component/Asset/MarketingOptIn.vitest.tsx > Marketing Opt In Asset layout Component > Image asset component > given variant is 'A', should set Image show prop to true
-[1] Error: Snapshot `Marketing Opt In Asset layout Component > Image asset component > given variant is 'A', should set Image show prop to true 1` mismatched
-[1]
-[1] - Expected
-[1] + Received
-[1]
-[1] @@ -22,13 +22,11 @@
-[1]     >
-[1]       <h2
-[1]         class="text heading sizeM bold"
-[1]         data-testid="post-checkout-subtitle-heading"
-[1]       >
-[1] -       postcheckout:asset:ap-marketing-opt-in-202308.subtitle__A-PRE_CAPTURE
-[1] +       postcheckout:asset:ap-asset-202303.subtitle__B-PRE_CAPTURE
-[1] -       postcheckout:asset:ap-marketing-opt-in-202308.subtitle__A
-[1] -       postcheckout:asset:ap-marketing-opt-in-202308.subtitle
-[1]       </h2>
-[1]     </div>
-[1]     <div
-[1]       class="assetPaddedCard assetPaddingSmall"
-[1]       data-testid="marketing-opt-in-card"
-[1]
-[1]  ❯ apps/checkout/src/component/Asset/MarketingOptIn.vitest.tsx:205:25
-[1]     203|       )
-[1]     204| 
-[1]     205|       expect(container).toMatchSnapshot()
-[1]        |                         ^
-[1]     206|       expect(mocks.Image).toHaveBeenCalledWith(expect.objectContaining...
-[1]     207|     })
-[1]
-[1] ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/11]⎯
-[1]
-[1]  FAIL  apps/checkout/src/component/Asset/MarketingOptIn.vitest.tsx > Marketing Opt In Asset layout Component > Image asset component > given variant is 'B', should set Image show prop to false
-[1] Error: Snapshot `Marketing Opt In Asset layout Component > Image asset component > given variant is 'B', should set Image show prop to false 1` mismatched
-[1]
-[1] - Expected
-[1] + Received
-[1]
-[1] @@ -22,13 +22,11 @@
-[1]     >
-[1]       <h2
-[1]         class="text heading sizeM bold"
-[1]         data-testid="post-checkout-subtitle-heading"
-[1]       >
-[1] -       postcheckout:asset:ap-marketing-opt-in-202308.subtitle__B-PRE_CAPTURE
-[1] +       postcheckout:asset:ap-asset-202303.subtitle__B-PRE_CAPTURE
-[1] -       postcheckout:asset:ap-marketing-opt-in-202308.subtitle__B
-[1] -       postcheckout:asset:ap-marketing-opt-in-202308.subtitle
-[1]       </h2>
-[1]     </div>
-[1]     <div
-[1]       class="assetPaddedCard assetPaddingSmall"
-[1]       data-testid="marketing-opt-in-card"
-[1]
-[1]  ❯ apps/checkout/src/component/Asset/MarketingOptIn.vitest.tsx:205:25
-[1]     203|       )
-[1]     204| 
-[1]     205|       expect(container).toMatchSnapshot()
-[1]        |                         ^
-[1]     206|       expect(mocks.Image).toHaveBeenCalledWith(expect.objectContaining...
-[1]     207|     })
-[1]
-[1] ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/11]⎯
-[1]
-[1]  FAIL  apps/checkout/src/component/Asset/MarketingOptIn.vitest.tsx > Marketing Opt In Asset layout Component > Image asset component > given variant is 'D', should set Image show prop to true
-[1] Error: Snapshot `Marketing Opt In Asset layout Component > Image asset component > given variant is 'D', should set Image show prop to true 1` mismatched
-[1]
-[1] - Expected
-[1] + Received
-[1]
-[1] @@ -22,13 +22,11 @@
-[1]     >
-[1]       <h2
-[1]         class="text heading sizeM bold"
-[1]         data-testid="post-checkout-subtitle-heading"
-[1]       >
-[1] -       postcheckout:asset:ap-marketing-opt-in-202308.subtitle__D-PRE_CAPTURE
-[1] +       postcheckout:asset:ap-asset-202303.subtitle__B-PRE_CAPTURE
-[1] -       postcheckout:asset:ap-marketing-opt-in-202308.subtitle__D
-[1] -       postcheckout:asset:ap-marketing-opt-in-202308.subtitle
-[1]       </h2>
-[1]     </div>
-[1]     <div
-[1]       class="assetPaddedCard assetPaddingSmall"
-[1]       data-testid="marketing-opt-in-card"
-[1]
-[1]  ❯ apps/checkout/src/component/Asset/MarketingOptIn.vitest.tsx:205:25
-[1]     203|       )
-[1]     204| 
-[1]     205|       expect(container).toMatchSnapshot()
-[1]        |                         ^
-[1]     206|       expect(mocks.Image).toHaveBeenCalledWith(expect.objectContaining...
-[1]     207|     })
-[1]
-[1] ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/11]⎯
-[1]
-[1]  FAIL  apps/checkout/src/component/Asset/MarketingOptIn.vitest.tsx > Marketing Opt In Asset layout Component > LoaderTitle asset component > should not render LoaderTitle when user has not performed an action
-[1] Error: Snapshot `Marketing Opt In Asset layout Component > LoaderTitle asset component > should not render LoaderTitle when user has not performed an action 1` mismatched
-[1]
-[1] - Expected
-[1] + Received
-[1]
-[1] @@ -22,13 +22,11 @@
-[1]     >
-[1]       <h2
-[1]         class="text heading sizeM bold"
-[1]         data-testid="post-checkout-subtitle-heading"
-[1]       >
-[1] -       postcheckout:asset:ap-marketing-opt-in-202308.subtitle__A-PRE_CAPTURE
-[1] +       postcheckout:asset:ap-asset-202303.subtitle__B-PRE_CAPTURE
-[1] -       postcheckout:asset:ap-marketing-opt-in-202308.subtitle__A
-[1] -       postcheckout:asset:ap-marketing-opt-in-202308.subtitle
-[1]       </h2>
-[1]     </div>
-[1]     <div
-[1]       class="assetPaddedCard assetPaddingSmall"
-[1]       data-testid="marketing-opt-in-card"
-[1]
-[1]  ❯ apps/checkout/src/component/Asset/MarketingOptIn.vitest.tsx:243:25
-[1]     241|       )
-[1]     242| 
-[1]     243|       expect(container).toMatchSnapshot()
-[1]        |                         ^
-[1]     244|       expect(mocks.LoaderTitle).toHaveBeenCalledWith(expect.objectCont...
-[1]     245|     })
-[1]
-[1] ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/11]⎯
-[1]
-[1]  FAIL  apps/checkout/src/component/Asset/component/Subtitle.vitest.tsx > Asset:Subtitle component > should match the snapshot
-[1] Error: Snapshot `Asset:Subtitle component > should match the snapshot 1` mismatched
-[1]
-[1] - Expected
-[1] + Received
-[1]
-[1]   <div>
-[1]     <h2
-[1]       class="text heading sizeM bold"
-[1]       data-testid="post-checkout-subtitle-heading"
-[1]     >
-[1] -     postcheckout:asset:ap-asset-202303.subtitle__A-PRE_CAPTURE
-[1] +     postcheckout:asset:ap-asset-202303.subtitle__B-PRE_CAPTURE
-[1] -     postcheckout:asset:ap-asset-202303.subtitle__A
-[1] -     postcheckout:asset:ap-asset-202303.subtitle
-[1]     </h2>
-[1]   </div>
-[1]
-[1]  ❯ apps/checkout/src/component/Asset/component/Subtitle.vitest.tsx:66:34
-[1]      64|     const { container } = render(<Subtitle />)
-[1]      65| 
-[1]      66|     expect(container.firstChild).toMatchSnapshot()
-[1]        |                                  ^
-[1]      67|   })
-[1]      68| 
-[1]
-[1] ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/11]⎯
-[1]
-[1]  FAIL  apps/checkout/src/component/Asset/component/Subtitle.vitest.tsx > Asset:Subtitle component > should fetch the appropriate default margin spacing via getSpacingClassName
-[1] Error: Snapshot `Asset:Subtitle component > should fetch the appropriate default margin spacing via getSpacingClassName 1` mismatched
-[1]
-[1] - Expected
-[1] + Received
-[1]
-[1]   <div>
-[1]     <h2
-[1]       class="text heading sizeM bold"
-[1]       data-testid="post-checkout-subtitle-heading"
-[1]     >
-[1] -     postcheckout:asset:ap-asset-202303.subtitle__A-PRE_CAPTURE
-[1] +     postcheckout:asset:ap-asset-202303.subtitle__B-PRE_CAPTURE
-[1] -     postcheckout:asset:ap-asset-202303.subtitle__A
-[1] -     postcheckout:asset:ap-asset-202303.subtitle
-[1]     </h2>
-[1]   </div>
-[1]
-[1]  ❯ apps/checkout/src/component/Asset/component/Subtitle.vitest.tsx:76:34
-[1]      74|   it('should fetch the appropriate default margin spacing via getSpaci...
-[1]      75|     const { container } = render(<Subtitle />)
-[1]      76|     expect(container.firstChild).toMatchSnapshot()
-[1]        |                                  ^
-[1]      77|     expect(mocks.getSpacingClassName).toHaveBeenCalledWith({ marginBot...
-[1]      78|   })
-[1]
-[1] ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/11]⎯
-[1]
-[1]
-[1]   Snapshots  11 failed
-[1]  Test Files  3 failed | 1105 passed (1108)
-[1]       Tests  11 failed | 11975 passed | 7 skipped (11993)
-[1]    Start at  07:10:28
-[1]    Duration  155.29s (transform 243.07s, setup 378.62s, collect 7182.21s, tests 258.74s, environment 515.44s, prepare 166.57s)
-[1]
-[1] TZ=Australia/Melbourne vitest run --coverage exited with code 1
-error Command failed with exit code 1.
-info Visit https://yarnpkg.com/en/docs/cli/run for documentation about this command.
-🚨 Error: The command exited with status 1
+[0]  FAIL  apps/checkout/src/page/apple-paylater/summary/consumer-lending-summary/ApplePaylaterConsumerLendingSummary.test.tsx (28.204 s)
+[0]   ● ApplePaylaterConsumerLendingSummaryPage › should match snapshot
+[0]
+[0]     expect(received).toMatchSnapshot()
+[0]
+[0]     Snapshot name: `ApplePaylaterConsumerLendingSummaryPage should match snapshot 1`
+[0]
+[0]     - Snapshot  - 3
+[0]     + Received  + 1
+[0]
+[0]     @@ -26,13 +26,11 @@
+[0]           <div
+[0]             class="notification"
+[0]           >
+[0]             <p
+[0]               class="text sizeM semanticColorError"
+[0]     -       >
+[0]     -         summary:error.undefined.message_cannotSwitch
+[0]     -       </p>
+[0]     +       />
+[0]           </div>
+[0]           <div>
+[0]             ConsumerLendingPlanDetails
+[0]           </div>
+[0]           <div
+[0]
+[0]       271 |   it('should match snapshot', () => {
+[0]       272 |     const { container } = render(<ApplePaylaterConsumerLendingSummaryPage />)
+[0]     > 273 |     expect(container).toMatchSnapshot()
+[0]           |                       ^
+[0]       274 |   })
+[0]       275 |
+[0]       276 |   it('should have no axe violations', async () => {
+[0]
+[0]       at Object.toMatchSnapshot (apps/checkout/src/page/apple-paylater/summary/consumer-lending-summary/ApplePaylaterConsumerLendingSummary.test.tsx:273:23)
+[0]
+[0]  › 1 snapshot failed.

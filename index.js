@@ -59,6 +59,15 @@ async function runCommand(command, cwd = process.cwd()) {
 // Whether we're running in batch mode (individual fixers should commit but not push)
 let BATCH_MODE = false;
 
+// Strip noisy Jest warnings (e.g., jest-haste-map duplicates) that confuse the agent
+function cleanTestOutput(output) {
+  return output
+    .split('\n')
+    .filter(line => !line.startsWith('jest-haste-map:'))
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n'); // collapse excessive blank lines
+}
+
 // Context window management: approximate token count and prune old messages if needed
 function estimateTokens(messages) {
   let total = 0;
@@ -1070,7 +1079,7 @@ TOOLS AVAILABLE:
       role: "user",
       content: [
           `Tests failed for ${relativePath}.`,
-          `\nTEST OUTPUT:\n${(testResult.stdout + testResult.stderr).slice(0, 15000)}`,
+          `\nTEST OUTPUT:\n${cleanTestOutput(testResult.stdout + testResult.stderr).slice(0, 15000)}`,
           `\nTEST FILE CONTENT:\n${initialFileContent}`,
           sourceFileContent ? `\nSOURCE FILE (${sourceFilePath}):\n${sourceFileContent}` : '',
           importsList ? `\nTEST FILE IMPORTS:\n${importsList}` : '',
@@ -1145,7 +1154,7 @@ TOOLS AVAILABLE:
                              result = "SUCCESS: Tests passed! Great job.";
                              console.log(chalk.bold.green("  ✅ Tests passed!"));
                          } else {
-                             const errors = testResult.stdout + testResult.stderr;
+                             const errors = cleanTestOutput(testResult.stdout + testResult.stderr);
                              result = `FAILURE: Tests still failed after fix.\nOutput:\n${errors.slice(0, 15000)}`;
                              console.log(chalk.red("  ❌ Verify Failed."));
                          }
