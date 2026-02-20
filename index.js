@@ -859,7 +859,11 @@ async function fixTestErrorsForFile(relativePath, runner = 'jest') {
   if (runner === 'vitest') {
       testCommand = `yarn run test:vitest --run "${relativePath}"`;
   } else {
-      testCommand = `TZ="Australia/Melbourne" npx jest --findRelatedTests "${relativePath}" --passWithNoTests`;
+      // Use --testPathPattern instead of --findRelatedTests to avoid
+      // jest-haste-map scanning the full dependency graph and hitting
+      // duplicate mock errors in monorepo workspaces
+      const escapedPath = relativePath.replace(/[.*+?^${}()|[\]\\]/g, '\\\\$&');
+      testCommand = `TZ="Australia/Melbourne" npx jest --testPathPattern="${escapedPath}" --passWithNoTests --no-cache`;
   }
 
   console.log(chalk.yellow(`  Running tests: ${testCommand}`));
@@ -2573,7 +2577,9 @@ const tools = {
       console.log(chalk.yellow(`  Running: ${command} in ${workDir}`));
       return new Promise((resolve) => {
         exec(command, { cwd: workDir, timeout: 300000, maxBuffer: 1024 * 1024 * 10, env: REPO_ENV }, (error, stdout, stderr) => {
-          const output = (stdout || '') + (stderr ? `\nSTDERR:\n${stderr}` : '');
+          let output = (stdout || '') + (stderr ? `\nSTDERR:\n${stderr}` : '');
+          // Strip noisy jest-haste-map warnings from tool output
+          output = cleanTestOutput(output);
           if (error) {
             const errorMsg = error.killed ? 'Command Timed Out (300s).' : error.message;
             resolve(`Command Failed.\nError: ${errorMsg}\nOutput: ${output.slice(0, 8000)}`);
