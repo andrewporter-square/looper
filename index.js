@@ -876,11 +876,14 @@ async function fixTestErrorsForFile(relativePath, runner = 'jest') {
       return;
   }
 
-  // Check for Jest startup/infrastructure errors (not actual test failures)
-  const jestStartupPatterns = /jest-haste-map:.*duplicate manual mock found|ENOSPC|out of memory|Cannot find module 'jest-|jest-config.*error|Could not locate module.*mapped as/i;
-  if (runner === 'jest' && jestStartupPatterns.test(testOutput)) {
-      console.log(chalk.yellow(`  ⚠️ Jest has a startup/infrastructure error (not a test failure). Skipping this file.`));
-      console.log(chalk.dim(testOutput.match(/jest-haste-map:.*|Error:.*|Cannot find.*/gm)?.slice(0, 5).join('\n') || testOutput.slice(0, 500)));
+  // Check for Jest FATAL startup errors (not warnings)
+  // Note: jest-haste-map "duplicate manual mock found" is a WARNING — Jest still runs tests.
+  // Only bail out on truly fatal errors where Jest cannot execute at all.
+  const jestFatalPatterns = /ENOSPC|out of memory|Cannot find module 'jest-environment|jest-config.*error|Could not locate module.*mapped as/i;
+  const hasTestResults = /Tests?:\s+\d+|Test Suites?:\s+\d+|PASS|FAIL/i.test(testOutput);
+  if (runner === 'jest' && jestFatalPatterns.test(testOutput) && !hasTestResults) {
+      console.log(chalk.yellow(`  ⚠️ Jest has a fatal startup error (no test results produced). Skipping this file.`));
+      console.log(chalk.dim(testOutput.match(/Error:.*|Cannot find.*/gm)?.slice(0, 5).join('\n') || testOutput.slice(0, 500)));
       return;
   }
 
