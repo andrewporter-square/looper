@@ -12,6 +12,7 @@
  *   node check-prs.js --fix-comments   # only fix review comment feedback
  *   node check-prs.js --author @me     # filter by author (default: @me)
  *   node check-prs.js --label checkout # filter by label
+ *   node check-prs.js --run-tests      # run playwright tests locally for failing PRs
  */
 
 require('dotenv').config();
@@ -155,6 +156,17 @@ function isDescriptionTooShortFailure(check, logData) {
   return combined.includes('description') && (combined.includes('too short') || combined.includes('empty'));
 }
 
+// ─── Load pr.json branch filter ─────────────────────────────────────────────
+
+function loadPRFilter() {
+  const filterPath = path.join(__dirname, 'pr.json');
+  try {
+    const data = JSON.parse(fs.readFileSync(filterPath, 'utf8'));
+    if (Array.isArray(data) && data.length > 0) return data;
+  } catch (_) {}
+  return null;
+}
+
 // ─── List open looper PRs ───────────────────────────────────────────────────
 
 async function listLooperPRs({ author, label }) {
@@ -170,7 +182,15 @@ async function listLooperPRs({ author, label }) {
 
   try {
     const allPRs = JSON.parse(result.stdout);
-    // Filter to looper-created branches only (unless label is specified, in which case trust it)
+
+    // If pr.json exists and has entries, use it as the branch filter
+    const prFilter = loadPRFilter();
+    if (prFilter) {
+      console.log(chalk.gray(`  Using pr.json filter (${prFilter.length} branch(es))`));
+      return allPRs.filter(pr => prFilter.includes(pr.headRefName));
+    }
+
+    // Otherwise fall back to looper branch pattern matching (unless label is specified)
     return label ? allPRs : allPRs.filter(pr => isLooperBranch(pr.headRefName));
   } catch (e) {
     console.error(chalk.red(`Failed to parse PR list: ${e.message}`));
@@ -218,6 +238,135 @@ function classifyCheckState(state) {
   if (['SUCCESS', 'PASS', 'NEUTRAL', 'SKIPPED'].includes(s)) return 'pass';
   if (['FAILURE', 'FAIL', 'ERROR', 'TIMED_OUT', 'CANCELLED', 'ACTION_REQUIRED', 'STALE'].includes(s)) return 'fail';
   return 'pending';
+}
+
+// ─── Buildkite API helpers ──────────────────────────────────────────────────
+
+const BUILDKITE_API = 'https://api.buildkite.com/v2';
+
+async function buildkiteApiFetch(apiPath, maxChars = 30000) {
+  const token = process.env.BUILDKITE_TOKEN;
+  if (!token) return null;
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 20000);
+    const response = await fetch(`${BUILDKITE_API}${apiPath}`, {
+      signal: controller.signal,
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Accept': 'application/json',
+      },
+    });
+    clearTimeout(timeout);
+    if (!response.ok) {
+      const errBody = await response.text().catch(() => '');
+      console.log(chalk.dim(`      Buildkite API ${response.status}: ${apiPath.slice(0, 80)}`));
+      if (response.status === 403 || response.status === 401) {
+        console.log(chalk.dim(`      Token prefix: ${token.slice(0, 8)}... — check token scopes (needs read_builds)`));
+        console.log(chalk.dim(`      Response: ${errBody.slice(0, 200)}`));
+      }
+      return null;
+    }
+    const body = await response.text();
+    return body.slice(0, maxChars);
+  } catch (err) {
+    console.log(chalk.dim(`      Buildkite API error: ${err.message}`));
+    return null;
+  }
+}
+
+/**
+ * Parse a Buildkite web URL and fetch structured logs via the REST API.
+ * Supports these URL patterns:
+ *   https://buildkite.com/{org}/{pipeline}/builds/{buildNumber}
+ *   https://buildkite.com/{org}/{pipeline}/builds/{buildNumber}#job-uuid
+ */
+async function fetchBuildkiteLogs(url, maxChars = 30000) {
+  // Match: buildkite.com/{org}/{pipeline}/builds/{number}
+  const buildMatch = url.match(/buildkite\.com\/([^/]+)\/([^/]+)\/builds\/(\d+)/);
+  if (!buildMatch) return null;
+
+  const [, org, pipeline, buildNumber] = buildMatch;
+  const jobAnchor = url.match(/#([0-9a-f-]{36})/);  // optional #job-uuid anchor
+
+  console.log(chalk.dim(`      Fetching Buildkite build: ${org}/${pipeline}#${buildNumber}`));
+
+  // 1. Fetch the build summary (response can be large due to embedded job data)
+  const buildJson = await buildkiteApiFetch(
+    `/organizations/${org}/pipelines/${pipeline}/builds/${buildNumber}`,
+    500000  // build responses can be very large; don't truncate before parsing
+  );
+  if (!buildJson) return null;
+
+  let build;
+  try { build = JSON.parse(buildJson); } catch { return null; }
+
+  const sections = [];
+  sections.push(`═══ Buildkite Build #${buildNumber} ═══`);
+  sections.push(`Pipeline: ${build.pipeline?.name || pipeline}`);
+  sections.push(`State: ${build.state}  |  Branch: ${build.branch}  |  Commit: ${(build.commit || '').slice(0, 12)}`);
+  sections.push(`Message: ${build.message || '(none)'}`);
+  sections.push(`URL: ${build.web_url || url}`);
+
+  // 2. Find failed jobs (or a specific job if anchor present)
+  const jobs = (build.jobs || []).filter(j => j.type === 'script');
+  const failedJobs = jobs.filter(j =>
+    j.state === 'failed' || j.state === 'timed_out' || j.state === 'canceled'
+  );
+
+  // If URL has a #job-uuid anchor, prioritize that specific job
+  let targetJobs = failedJobs;
+  if (jobAnchor) {
+    const anchorJob = jobs.find(j => j.id === jobAnchor[1]);
+    if (anchorJob) targetJobs = [anchorJob];
+  }
+
+  if (targetJobs.length === 0 && failedJobs.length === 0) {
+    sections.push('\nNo failed jobs found in this build.');
+    return sections.join('\n').slice(0, maxChars);
+  }
+
+  // 3. Fetch logs for each failed job (cap at 5 jobs to avoid excessive API calls)
+  const jobsToFetch = targetJobs.slice(0, 5);
+  for (const job of jobsToFetch) {
+    sections.push(`\n═══ Job: ${job.name || job.label || job.id} (${job.state}) ═══`);
+
+    // Fetch the job log (plain text)
+    const logText = await buildkiteApiFetch(
+      `/organizations/${org}/pipelines/${pipeline}/builds/${buildNumber}/jobs/${job.id}/log`,
+      60000  // logs can be big, grab more then truncate
+    );
+
+    if (logText) {
+      try {
+        const logData = JSON.parse(logText);
+        const content = logData.content || logData.output || '';
+        // Take the last portion of logs (failures are usually at the end)
+        const logLines = content.split('\n');
+        const tail = logLines.slice(-300).join('\n');
+        // Strip ANSI escape codes for readability
+        const cleaned = tail.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '');
+        sections.push(cleaned);
+      } catch {
+        // If not JSON, it might be raw text
+        const cleaned = logText.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '');
+        const lines = cleaned.split('\n');
+        sections.push(lines.slice(-300).join('\n'));
+      }
+    } else {
+      sections.push('(Could not retrieve job log)');
+    }
+
+    // Also include the job's exit status and signal if available
+    if (job.exit_status != null) sections.push(`Exit status: ${job.exit_status}`);
+    if (job.soft_failed) sections.push('(soft-failed — allowed to fail)');
+  }
+
+  if (failedJobs.length > 5) {
+    sections.push(`\n... and ${failedJobs.length - 5} more failed jobs (not shown)`);
+  }
+
+  return sections.join('\n').slice(0, maxChars);
 }
 
 // ─── Fetch web page content (for CI failure pages) ─────────────────────────
@@ -278,7 +427,13 @@ async function fetchWebPageContent(url, maxChars = 30000) {
       }
     }
 
-    // For Buildkite URLs, use BUILDKITE_TOKEN if available
+    // For Buildkite URLs, use the Buildkite REST API to get structured build/job data
+    if (url.includes('buildkite.com') && process.env.BUILDKITE_TOKEN) {
+      const bkResult = await fetchBuildkiteLogs(url, maxChars);
+      if (bkResult && bkResult.length > 50) return bkResult;
+      // Fall through to generic fetch if API approach didn't work
+    }
+
     // For other CI providers, try common token env vars
     const authHeaders = {};
     if (url.includes('buildkite.com') && process.env.BUILDKITE_TOKEN) {
@@ -435,6 +590,456 @@ async function getFailedRunLogs(prNumber, check) {
   return { source: 'job-logs', logs: annotationLogs + allLogs.join('\n') };
 }
 
+// ─── Playwright test failure detection & analysis ─────────────────────────────
+
+/**
+ * Detect whether a CI check failure is a Playwright test failure.
+ * Returns the parsed info if it is, or null otherwise.
+ */
+function isPlaywrightFailure(check, logData) {
+  const checkName = (check.name || '').toLowerCase();
+  const logs = (logData?.logs || '').toLowerCase();
+  const combined = `${checkName} ${logs}`;
+
+  // Detect playwright-related CI jobs
+  const isPlaywright = combined.includes('playwright') ||
+    combined.includes('.pw.js') ||
+    combined.includes('.pw.ts') ||
+    combined.includes('playwright-local-tests') ||
+    combined.includes('playwright-artefact-wrapper');
+
+  if (!isPlaywright) return null;
+
+  // Extract test file(s) and failure info from logs
+  const fullLogs = logData?.logs || '';
+  const result = {
+    isPlaywright: true,
+    checkName: check.name,
+    link: check.link,
+    failedTests: [],
+    tags: null,
+    browserEnv: null,
+    appName: null,
+    timedOut: false,
+    errorContextPaths: [],
+  };
+
+  // Extract PLAYWRIGHT_TAGS from logs
+  const tagsMatch = fullLogs.match(/PLAYWRIGHT_TAGS:\s*(@[\w_]+)/i);
+  if (tagsMatch) result.tags = tagsMatch[1];
+
+  // Extract BROWSER_ENV from check name or logs  
+  const envMatch = fullLogs.match(/BROWSER_ENV[=:]\s*['"]?([\w-]+)/i);
+  if (envMatch) result.browserEnv = envMatch[1];
+
+  // Extract APP_NAME from container name or check name
+  const containerMatch = fullLogs.match(/rocketship-ci-(\w+)-/i);
+  if (containerMatch) result.appName = containerMatch[1];
+
+  // Extract failed test files
+  const testFilePattern = /\d+\s+(browser\/scenarios\/[^\s]+\.pw\.[jt]s):(\d+):\d+\s*›\s*(.+?)\s*›\s*(.+)/g;
+  let testMatch;
+  while ((testMatch = testFilePattern.exec(fullLogs)) !== null) {
+    result.failedTests.push({
+      file: testMatch[1],
+      line: parseInt(testMatch[2]),
+      suite: testMatch[3].trim(),
+      name: testMatch[4].trim(),
+    });
+  }
+
+  // Deduplicate tests (retries produce duplicates)
+  const seen = new Set();
+  result.failedTests = result.failedTests.filter(t => {
+    const key = `${t.file}:${t.line}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  // Check for timeout
+  result.timedOut = fullLogs.includes('timeout') && fullLogs.includes('exceeded');
+
+  // Extract error-context.md paths
+  const contextPattern = /Error Context:\s*([^\n]+error-context\.md)/g;
+  let ctxMatch;
+  while ((ctxMatch = contextPattern.exec(fullLogs)) !== null) {
+    result.errorContextPaths.push(ctxMatch[1].trim());
+  }
+
+  // Infer tags from check name if not in logs
+  if (!result.tags) {
+    const nameTagMatch = checkName.match(/@([\w_]+)/i);
+    if (nameTagMatch) result.tags = `@${nameTagMatch[1]}`;
+  }
+
+  // Infer app name from tags or check name
+  if (!result.appName) {
+    if (result.tags?.includes('checkout') || checkName.includes('checkout')) result.appName = 'checkout';
+    else if (result.tags?.includes('portal') || checkName.includes('portal')) result.appName = 'portal';
+  }
+
+  // Infer browser env
+  if (!result.browserEnv) {
+    if (result.tags?.includes('_local_')) result.browserEnv = 'ci-local';
+  }
+
+  return result;
+}
+
+/**
+ * Download Buildkite build artifacts for a playwright failure.
+ * Returns { errorContexts, testResults } with parsed content.
+ */
+async function fetchPlaywrightArtifacts(check) {
+  const bkMatch = (check.link || '').match(/buildkite\.com\/([^/]+)\/([^/]+)\/builds\/(\d+)/);
+  if (!bkMatch || !process.env.BUILDKITE_TOKEN) return null;
+
+  const [, org, pipeline, buildNumber] = bkMatch;
+  console.log(chalk.cyan(`      📦 Fetching Playwright artifacts from Buildkite build #${buildNumber}...`));
+
+  // List artifacts for this build
+  const artifactListJson = await buildkiteApiFetch(
+    `/organizations/${org}/pipelines/${pipeline}/builds/${buildNumber}/artifacts`,
+    500000
+  );
+  if (!artifactListJson) {
+    console.log(chalk.dim(`      Could not list artifacts.`));
+    return null;
+  }
+
+  let artifacts;
+  try { artifacts = JSON.parse(artifactListJson); } catch { return null; }
+
+  if (!Array.isArray(artifacts) || artifacts.length === 0) {
+    console.log(chalk.dim(`      No artifacts found.`));
+    return null;
+  }
+
+  console.log(chalk.dim(`      Found ${artifacts.length} artifact(s).`));
+
+  const result = { errorContexts: [], testResults: null, traceFiles: [] };
+
+  // Find error-context.md files
+  const errorContextArtifacts = artifacts.filter(a =>
+    a.filename?.endsWith('error-context.md') || a.path?.includes('error-context.md')
+  );
+
+  // Find test-results.json
+  const testResultsArtifact = artifacts.find(a =>
+    a.filename === 'test-results.json' || a.path?.includes('test-results.json')
+  );
+
+  // Find trace files (informational, we can't easily view them but know they exist)
+  const traceArtifacts = artifacts.filter(a =>
+    a.filename?.endsWith('trace.zip') || a.path?.includes('trace.zip')
+  );
+  result.traceFiles = traceArtifacts.map(a => a.path || a.filename);
+
+  // Download error-context.md files
+  for (const artifact of errorContextArtifacts.slice(0, 5)) {
+    const downloadUrl = artifact.download_url;
+    if (!downloadUrl) continue;
+
+    try {
+      const token = process.env.BUILDKITE_TOKEN;
+      const response = await fetch(downloadUrl, {
+        headers: { 'Authorization': `Bearer ${token}` },
+        redirect: 'follow',
+      });
+      if (response.ok) {
+        const content = await response.text();
+        result.errorContexts.push({
+          path: artifact.path || artifact.filename,
+          content: content.slice(0, 15000),
+        });
+        console.log(chalk.green(`      ✓ Downloaded: ${artifact.path || artifact.filename}`));
+      }
+    } catch (err) {
+      console.log(chalk.dim(`      Failed to download ${artifact.filename}: ${err.message}`));
+    }
+  }
+
+  // Download test-results.json
+  if (testResultsArtifact?.download_url) {
+    try {
+      const token = process.env.BUILDKITE_TOKEN;
+      const response = await fetch(testResultsArtifact.download_url, {
+        headers: { 'Authorization': `Bearer ${token}` },
+        redirect: 'follow',
+      });
+      if (response.ok) {
+        const content = await response.text();
+        try {
+          result.testResults = JSON.parse(content);
+          console.log(chalk.green(`      ✓ Downloaded test-results.json`));
+        } catch {
+          console.log(chalk.dim(`      test-results.json was not valid JSON`));
+        }
+      }
+    } catch (err) {
+      console.log(chalk.dim(`      Failed to download test-results.json: ${err.message}`));
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Parse a Playwright test-results.json into a human-readable failure summary.
+ */
+function summarizePlaywrightResults(testResults) {
+  if (!testResults?.suites) return null;
+
+  const failures = [];
+
+  function walkSuites(suites, parentTitle = '') {
+    for (const suite of suites) {
+      const title = parentTitle ? `${parentTitle} › ${suite.title}` : suite.title;
+      if (suite.specs) {
+        for (const spec of suite.specs) {
+          const failedTests = (spec.tests || []).filter(t =>
+            t.status === 'unexpected' || t.status === 'failed' || t.status === 'timedOut'
+          );
+          for (const test of failedTests) {
+            const lastResult = test.results?.[test.results.length - 1];
+            failures.push({
+              title: `${title} › ${spec.title}`,
+              file: spec.file || suite.file,
+              line: spec.line,
+              status: test.status,
+              duration: lastResult?.duration,
+              error: lastResult?.error?.message || lastResult?.error?.snippet || null,
+              retries: (test.results?.length || 1) - 1,
+            });
+          }
+        }
+      }
+      if (suite.suites) walkSuites(suite.suites, title);
+    }
+  }
+
+  walkSuites(testResults.suites);
+
+  if (failures.length === 0) return null;
+
+  const lines = [`\n═══ Playwright Test Results Summary ═══`, `${failures.length} test(s) failed:\n`];
+  for (const f of failures) {
+    lines.push(`  ✗ ${f.title}`);
+    if (f.file) lines.push(`    File: ${f.file}${f.line ? `:${f.line}` : ''}`);
+    lines.push(`    Status: ${f.status} | Retries: ${f.retries} | Duration: ${f.duration ? Math.round(f.duration / 1000) + 's' : 'unknown'}`);
+    if (f.error) {
+      const errorPreview = f.error.split('\n').slice(0, 5).join('\n');
+      lines.push(`    Error: ${errorPreview}`);
+    }
+    lines.push('');
+  }
+
+  return lines.join('\n');
+}
+
+/**
+ * Run playwright tests locally for a PR branch.
+ * Returns { success, output, testResults }
+ */
+async function runPlaywrightTestsLocally(pwInfo, branch) {
+  console.log(chalk.bold.yellow(`\n  🎭 Running Playwright tests locally...`));
+
+  const tags = pwInfo.tags || '@checkout_local_regression_preferred_day';
+  const browserEnv = pwInfo.browserEnv || 'ci-local';
+  const appName = pwInfo.appName || 'checkout';
+
+  console.log(chalk.gray(`    Tags: ${tags}`));
+  console.log(chalk.gray(`    Browser env: ${browserEnv}`));
+  console.log(chalk.gray(`    App: ${appName}`));
+  console.log(chalk.gray(`    Branch: ${branch}`));
+
+  // Ensure we're on the right branch
+  await runCommand(`git fetch origin ${branch}`, REPO_ROOT);
+  await runCommand(`git checkout ${branch}`, REPO_ROOT);
+  await runCommand(`git pull origin ${branch} --no-edit`, REPO_ROOT);
+
+  // Check Docker is running
+  const dockerCheck = await runCommand(`docker info`, REPO_ROOT);
+  if (!dockerCheck.success) {
+    console.log(chalk.red(`    Docker is not running. Attempting to start...`));
+    await runCommand(`open -a Docker`, REPO_ROOT);
+    // Wait for Docker to start
+    for (let i = 0; i < 30; i++) {
+      await new Promise(r => setTimeout(r, 3000));
+      const check = await runCommand(`docker info`, REPO_ROOT);
+      if (check.success) break;
+      if (i === 29) {
+        console.log(chalk.red(`    Docker failed to start after 90s. Cannot run tests.`));
+        return { success: false, output: 'Docker not available', testResults: null };
+      }
+    }
+  }
+
+  // Check ECR auth (the images are from a private registry)
+  const ecrCheck = await runCommand(`aws sts get-caller-identity`, REPO_ROOT);
+  if (!ecrCheck.success) {
+    console.log(chalk.yellow(`    ⚠️  AWS credentials not available. Attempting ECR login...`));
+    // Try to login via the ecr plugin approach used in CI
+    const ecrLogin = await runCommand(
+      `aws ecr get-login-password --region ap-southeast-2 | docker login --username AWS --password-stdin 361053881171.dkr.ecr.ap-southeast-2.amazonaws.com 2>&1`,
+      REPO_ROOT
+    );
+    if (!ecrLogin.success) {
+      console.log(chalk.red(`    Cannot authenticate to ECR. Run 'aws configure' or set AWS credentials first.`));
+      console.log(chalk.dim(`    The playwright tests need Docker images from ECR (checkout, mocks, landing).`));
+      console.log(chalk.dim(`    Alternatively, use 'make playwright-local-tests-build' to build images locally.`));
+      return { success: false, output: 'ECR auth failed', testResults: null };
+    }
+  }
+
+  // Run the tests
+  console.log(chalk.yellow(`    Running: make playwright-local-tests ...`));
+  console.log(chalk.dim(`    This typically takes 2-5 minutes.\n`));
+
+  const testResult = await runCommand(
+    `BROWSER_ENV=${browserEnv} PLAYWRIGHT_TAGS='${tags}' APP_NAME=${appName} /usr/bin/make playwright-local-tests 2>&1`,
+    REPO_ROOT
+  );
+
+  const output = testResult.stdout + testResult.stderr;
+
+  // Try to read test-results.json from the output directory
+  let testResults = null;
+  const resultsPath = path.join(REPO_ROOT, 'test/__output__/playwright/test-results.json');
+  if (fs.existsSync(resultsPath)) {
+    try {
+      testResults = JSON.parse(fs.readFileSync(resultsPath, 'utf8'));
+    } catch (_) {}
+  }
+
+  // Try to read error-context.md files
+  const errorContexts = [];
+  const resultsDir = path.join(REPO_ROOT, 'test/__output__/playwright/results');
+  if (fs.existsSync(resultsDir)) {
+    const walkDir = (dir) => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const fullPath = path.join(dir, entry.name);
+        if (entry.isDirectory()) walkDir(fullPath);
+        else if (entry.name === 'error-context.md') {
+          try {
+            errorContexts.push({
+              path: path.relative(REPO_ROOT, fullPath),
+              content: fs.readFileSync(fullPath, 'utf8').slice(0, 15000),
+            });
+          } catch (_) {}
+        }
+      }
+    };
+    walkDir(resultsDir);
+  }
+
+  if (testResult.success) {
+    console.log(chalk.bold.green(`\n  ✅ Playwright tests PASSED locally!`));
+  } else {
+    console.log(chalk.bold.red(`\n  ❌ Playwright tests FAILED locally.`));
+
+    // Show test results summary
+    if (testResults) {
+      const summary = summarizePlaywrightResults(testResults);
+      if (summary) console.log(chalk.red(summary));
+    }
+
+    // Show error contexts
+    if (errorContexts.length > 0) {
+      console.log(chalk.cyan(`\n  📋 Error Context(s):`));
+      for (const ctx of errorContexts) {
+        console.log(chalk.dim(`\n  --- ${ctx.path} ---`));
+        console.log(chalk.dim(ctx.content.replace(/^/gm, '    ')));
+      }
+    }
+
+    // Show output tail
+    const outputLines = output.split('\n');
+    const tail = outputLines.slice(-30).join('\n');
+    console.log(chalk.dim(`\n  --- Last 30 lines of output ---`));
+    console.log(chalk.dim(tail.replace(/^/gm, '    ')));
+  }
+
+  return {
+    success: testResult.success,
+    output,
+    testResults,
+    errorContexts,
+  };
+}
+
+/**
+ * Format a full Playwright failure report for a failing check.
+ * Combines CI logs, downloaded artifacts, and local test results.
+ */
+function formatPlaywrightReport(pwInfo, artifacts, localResults) {
+  const sections = [];
+
+  sections.push(`\n${'═'.repeat(60)}`);
+  sections.push(`🎭 PLAYWRIGHT TEST FAILURE REPORT`);
+  sections.push(`${'═'.repeat(60)}`);
+  sections.push(`Check: ${pwInfo.checkName}`);
+  if (pwInfo.tags) sections.push(`Tags: ${pwInfo.tags}`);
+  if (pwInfo.appName) sections.push(`App: ${pwInfo.appName}`);
+  if (pwInfo.browserEnv) sections.push(`Browser Env: ${pwInfo.browserEnv}`);
+  if (pwInfo.timedOut) sections.push(`⏰ Test timed out`);
+
+  if (pwInfo.failedTests.length > 0) {
+    sections.push(`\nFailed tests (${pwInfo.failedTests.length}):`);
+    for (const t of pwInfo.failedTests) {
+      sections.push(`  ✗ ${t.suite} › ${t.name}`);
+      sections.push(`    ${t.file}:${t.line}`);
+    }
+  }
+
+  // Artifact error contexts
+  if (artifacts?.errorContexts?.length > 0) {
+    sections.push(`\n${'─'.repeat(40)}`);
+    sections.push(`📋 Error Context from CI Artifacts:`);
+    for (const ctx of artifacts.errorContexts) {
+      sections.push(`\n--- ${ctx.path} ---`);
+      sections.push(ctx.content);
+    }
+  }
+
+  // Test results summary from artifacts
+  if (artifacts?.testResults) {
+    const summary = summarizePlaywrightResults(artifacts.testResults);
+    if (summary) sections.push(summary);
+  }
+
+  // Trace file references
+  if (artifacts?.traceFiles?.length > 0) {
+    sections.push(`\n🔍 Trace files available:`);
+    for (const t of artifacts.traceFiles.slice(0, 5)) {
+      sections.push(`  ${t}`);
+    }
+  }
+
+  // Local test results
+  if (localResults) {
+    sections.push(`\n${'─'.repeat(40)}`);
+    sections.push(`🏠 Local Test Run: ${localResults.success ? 'PASSED ✅' : 'FAILED ❌'}`);
+
+    if (localResults.testResults) {
+      const summary = summarizePlaywrightResults(localResults.testResults);
+      if (summary) sections.push(summary);
+    }
+
+    if (localResults.errorContexts?.length > 0) {
+      sections.push(`\n📋 Local Error Contexts:`);
+      for (const ctx of localResults.errorContexts) {
+        sections.push(`\n--- ${ctx.path} ---`);
+        sections.push(ctx.content);
+      }
+    }
+  }
+
+  sections.push(`\n${'═'.repeat(60)}`);
+  return sections.join('\n');
+}
+
 // ─── Fix a failing PR ───────────────────────────────────────────────────────
 
 async function fixFailingPR(pr, failedChecks, failureLogs) {
@@ -518,7 +1123,7 @@ RULES:
       model: 'gpt-5.2-2025-12-11',
       messages,
       temperature: 0,
-      max_tokens: 4096,
+      max_completion_tokens: 4096,
     });
 
     const content = response.choices[0].message.content.trim();
@@ -708,7 +1313,7 @@ async function fixFromComments(pr, commentData) {
   const triageResponse = await client.chat.completions.create({
     model: 'gpt-5.2-2025-12-11',
     temperature: 0,
-    max_tokens: 2048,
+    max_completion_tokens: 2048,
     messages: [
       {
         role: 'system',
@@ -901,6 +1506,7 @@ async function main() {
   const args = process.argv.slice(2);
   const shouldFix = args.includes('--fix');
   const shouldFixComments = args.includes('--fix-comments') || shouldFix;
+  const shouldRunTests = args.includes('--run-tests');
   const authorIdx = args.indexOf('--author');
   const author = authorIdx !== -1 ? args[authorIdx + 1] : '@me';
   const labelIdx = args.indexOf('--label');
@@ -913,6 +1519,7 @@ async function main() {
   if (label) console.log(chalk.gray(`  Label: ${label}`));
   console.log(chalk.gray(`  Auto-fix: ${shouldFix ? 'enabled' : 'disabled (use --fix to enable)'}`));
   console.log(chalk.gray(`  Fix comments: ${shouldFixComments ? 'enabled' : 'disabled (use --fix or --fix-comments)'}`));
+  console.log(chalk.gray(`  Run tests: ${shouldRunTests ? 'enabled' : 'disabled (use --run-tests to enable)'}`));
   console.log();
 
   // Save current branch to restore later
@@ -996,6 +1603,57 @@ async function main() {
         console.log(chalk.dim(`(${logData.source})`));
         console.log(chalk.dim(logPreview.replace(/^/gm, '        ')));
         console.log();
+      }
+
+      // Detect and report Playwright failures
+      const playwrightFailures = [];
+      for (let i = 0; i < failedChecks.length; i++) {
+        const pwInfo = isPlaywrightFailure(failedChecks[i], failureLogs[i]);
+        if (pwInfo) {
+          playwrightFailures.push({ check: failedChecks[i], logData: failureLogs[i], pwInfo, index: i });
+
+          console.log(chalk.bold.magenta(`\n    🎭 Playwright test failure detected!`));
+          if (pwInfo.failedTests.length > 0) {
+            for (const t of pwInfo.failedTests) {
+              console.log(chalk.magenta(`      ✗ ${t.suite} › ${t.name}`));
+              console.log(chalk.dim(`        ${t.file}:${t.line}`));
+            }
+          }
+          if (pwInfo.timedOut) console.log(chalk.yellow(`      ⏰ Test timed out`));
+
+          // Fetch artifacts from Buildkite
+          const artifacts = await fetchPlaywrightArtifacts(failedChecks[i]);
+          pwInfo._artifacts = artifacts;
+
+          if (artifacts?.errorContexts?.length > 0) {
+            console.log(chalk.cyan(`\n      📋 Error Context from CI:`));
+            for (const ctx of artifacts.errorContexts) {
+              console.log(chalk.dim(`      --- ${ctx.path} ---`));
+              console.log(chalk.dim(ctx.content.split('\n').slice(0, 20).join('\n').replace(/^/gm, '        ')));
+            }
+          }
+
+          if (artifacts?.testResults) {
+            const summary = summarizePlaywrightResults(artifacts.testResults);
+            if (summary) console.log(chalk.dim(summary.replace(/^/gm, '      ')));
+          }
+
+          // Print full report
+          const report = formatPlaywrightReport(pwInfo, artifacts, null);
+          const reportFile = path.join(__dirname, `.pr-${pr.number}-playwright-report.txt`);
+          fs.writeFileSync(reportFile, report, 'utf8');
+          console.log(chalk.dim(`      Full Playwright report saved to: ${reportFile}`));
+
+          // Run tests locally if --run-tests
+          if (shouldRunTests) {
+            const localResults = await runPlaywrightTestsLocally(pwInfo, pr.headRefName);
+            pwInfo._localResults = localResults;
+
+            // Update report with local results
+            const fullReport = formatPlaywrightReport(pwInfo, artifacts, localResults);
+            fs.writeFileSync(reportFile, fullReport, 'utf8');
+          }
+        }
       }
 
       // Save logs to file for reference

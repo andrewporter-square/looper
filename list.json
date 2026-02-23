@@ -1,3 +1,3 @@
 [
-  "apps/checkout/src/page/oh-no-error/OhNoError.tsx"
+  "apps/checkout/src/component/ShippingAddressInline/ShippingAddressInline.tsx"
 ]
