@@ -56,6 +56,39 @@ async function runCommand(command, cwd = process.cwd()) {
   });
 }
 
+/**
+ * Run prettier --write then eslint --fix on a single file.
+ * Prevents formatting regressions from agent-generated code (expanded imports,
+ * ternaries, conditionals that prettier wants on one line).
+ */
+async function formatFile(relativePath) {
+    const prettierBin = path.join('node_modules', '.bin', 'prettier');
+    const eslintBin = path.join('node_modules', '.bin', 'eslint');
+    console.log(chalk.dim(`  Formatting ${path.basename(relativePath)}...`));
+    await runCommand(`${prettierBin} --write "${relativePath}" 2>/dev/null || true`, REPO_ROOT);
+    await runCommand(`${eslintBin} "${relativePath}" --fix --quiet 2>/dev/null || true`, REPO_ROOT);
+}
+
+/**
+ * Format all staged/changed files before committing.
+ * Runs prettier --write on every changed .ts/.tsx/.js/.jsx file to ensure
+ * no formatting regressions slip through with --no-verify commits.
+ */
+async function formatChangedFiles() {
+    console.log(chalk.blue(`  Running prettier on changed files...`));
+    const diffResult = await runCommand(
+        `git diff --name-only HEAD --diff-filter=ACMR -- '*.ts' '*.tsx' '*.js' '*.jsx'`,
+        REPO_ROOT
+    );
+    const files = diffResult.stdout.trim().split('\n').filter(Boolean);
+    if (files.length === 0) return;
+    const prettierBin = path.join('node_modules', '.bin', 'prettier');
+    const eslintBin = path.join('node_modules', '.bin', 'eslint');
+    const fileArgs = files.map(f => `"${f}"`).join(' ');
+    await runCommand(`${prettierBin} --write ${fileArgs} 2>/dev/null || true`, REPO_ROOT);
+    await runCommand(`${eslintBin} ${fileArgs} --fix --quiet 2>/dev/null || true`, REPO_ROOT);
+}
+
 // Whether we're running in batch mode (individual fixers should commit but not push)
 let BATCH_MODE = false;
 
@@ -1026,6 +1059,10 @@ TOOLS AVAILABLE:
                 if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
                 fs.writeFileSync(args.path, args.content, 'utf8');
 
+                // Auto-fix formatting after agent write
+                const writtenRelPath = args.path.replace(`${REPO_ROOT}/`, '');
+                await formatFile(writtenRelPath);
+
                 // Re-run E2E tests to verify
                 attempt++;
                 console.log(chalk.blue(`  🔄 Re-running E2E tests (attempt ${attempt}/${MAX_E2E_FIX_ATTEMPTS})...`));
@@ -1099,6 +1136,7 @@ TOOLS AVAILABLE:
   if (isFixed) {
     fixedCount = failedTests.length;
     console.log(chalk.green(`  ✅ E2E failures fixed! Committing...`));
+    await formatChangedFiles();
     await runCommand(`git add .`, REPO_ROOT);
     await runCommand(`git checkout HEAD -- package.json yarn.lock 2>/dev/null || true`, REPO_ROOT);
     await runCommand(
@@ -1831,7 +1869,7 @@ TOOLS AVAILABLE:
                          fs.writeFileSync(args.path, args.content, 'utf8');
                          
                          // Auto-fix formatting after agent write (prettier, import order, etc.)
-                         await runCommand(`${eslintBin} "${relativePath}" --fix --quiet`, REPO_ROOT);
+                         await formatFile(relativePath);
 
                          // Verification Step
                          console.log(chalk.blue(`  Verifying...`));
@@ -1907,6 +1945,7 @@ TOOLS AVAILABLE:
 
     // 7. Commit (and Push if not in batch mode)
     console.log(chalk.green(`  Committing...`));
+    await formatChangedFiles();
     
     // Add file and suppressions
     // Derive app scope from file path
@@ -2094,6 +2133,9 @@ TOOLS AVAILABLE:
                     try {
                          fs.writeFileSync(args.path, args.content, 'utf8');
                          
+                         // Auto-fix formatting after agent write
+                         await formatFile(relativePath);
+                         
                          // Re-run tsc to verify
                          console.log(chalk.blue(`  Verifying with tsc...`));
                          const tscResult = await runCommand(`npx tsc --noEmit --pretty false 2>&1 | grep "${relativePath.replace(/^[^/]+\/[^/]+\//, '')}"`, tscDir);
@@ -2152,6 +2194,7 @@ TOOLS AVAILABLE:
 
   if (isFixed) {
     console.log(chalk.green(`  Committing TypeScript fix...`));
+    await formatChangedFiles();
     const tCommitParts = relativePath.split('/');
     const tCommitScope = (tCommitParts.length >= 2 && ['apps', 'libs', 'packages'].includes(tCommitParts[0]))
         ? tCommitParts[1] : 'core';
@@ -2297,6 +2340,7 @@ async function fixTestErrorsForFile(relativePath, runner = 'jest') {
           console.log(chalk.bold.green(`  ✅ Snapshots updated successfully!`));
           
           // Commit the snapshot updates
+          await formatChangedFiles();
           await runCommand(`git add .`, REPO_ROOT);
           await runCommand(`git checkout HEAD -- package.json yarn.lock 2>/dev/null || true`, REPO_ROOT);
           const snapshotParts = relativePath.split('/');
@@ -2521,6 +2565,10 @@ TOOLS AVAILABLE:
                          if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
                          fs.writeFileSync(args.path, args.content, 'utf8');
                          
+                         // Auto-fix formatting after agent write
+                         const writtenRelPath = args.path.replace(`${REPO_ROOT}/`, '');
+                         await formatFile(writtenRelPath);
+                         
                          // Verification Step
                          console.log(chalk.blue(`  Verifying tests...`));
                          testResult = await runCommand(testCommand, REPO_ROOT);
@@ -2579,6 +2627,7 @@ TOOLS AVAILABLE:
 
   if (isFixed) {
     console.log(chalk.green(`  Committing...`));
+    await formatChangedFiles();
     
     await runCommand(`git add .`, REPO_ROOT); // Add all changes
     await runCommand(`git checkout HEAD -- package.json yarn.lock 2>/dev/null || true`, REPO_ROOT);
