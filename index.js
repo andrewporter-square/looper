@@ -2270,15 +2270,24 @@ async function fixTestErrorsForFile(relativePath, runner = 'jest') {
   const snapshotMismatchCount = (failOutput.match(/›\s*\d+ snapshot[s]? failed/gi) || []).length
       + (failOutput.match(/Snapshot .* mismatched/gi) || []).length
       + (failOutput.match(/Snapshots:\s+\d+ failed/gi) || []).length;
+  // Detect non-snapshot assertion failures. Must exclude snapshot-related expect() calls
+  // like expect(x).toMatchSnapshot() and expect(x).toMatchInlineSnapshot() from the check.
+  const hasNonSnapshotAssertions = (() => {
+    // Look for expect().to* calls that are NOT snapshot assertions
+    const expectMatches = failOutput.match(/expect\(.*?\)\.to\w+/g) || [];
+    const nonSnapshotExpects = expectMatches.filter(m => !/toMatch(?:Inline)?Snapshot/i.test(m));
+    return nonSnapshotExpects.length > 0;
+  })();
   const hasNonSnapshotFailures = /FAIL.*\n.*●.*(?!.*snapshot)/i.test(failOutput) 
-      || /AssertionError|TypeError|ReferenceError|expect\(.*\)\.to/.test(failOutput);
+      || /AssertionError|TypeError|ReferenceError/.test(failOutput)
+      || hasNonSnapshotAssertions;
   
   if (snapshotMismatchCount > 0 && !hasNonSnapshotFailures) {
       console.log(chalk.yellow(`  📸 Detected snapshot-only failures. Attempting auto-update...`));
       
       let updateCommand = '';
       if (runner === 'vitest') {
-          updateCommand = `yarn run test:vitest "${relativePath}" --update`;
+          updateCommand = `yarn run test:vitest --run "${relativePath}" --update`;
       } else {
           updateCommand = `TZ="Australia/Melbourne" npx jest --findRelatedTests "${relativePath}" --passWithNoTests --updateSnapshot`;
       }
@@ -2952,7 +2961,7 @@ async function runTestFixer() {
        const e2eTagsOverride = e2eTagsArg ? e2eTagsArg.split('=')[1] : '';
        const e2eOpts = {
          app: 'checkout',
-         tags: e2eTagsOverride || '@checkout_local_regression_cl_us',
+         tags: e2eTagsOverride || '@checkout_local',
          useDocker: e2eUseDocker,
          headless: true,
          changedFiles: e2eChangedFiles,
