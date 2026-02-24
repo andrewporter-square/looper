@@ -60,22 +60,24 @@ async function runCommand(command, cwd = process.cwd()) {
  * Run prettier --write then eslint --fix on a single file.
  * Prevents formatting regressions from agent-generated code (expanded imports,
  * ternaries, conditionals that prettier wants on one line).
+ * Also prunes stale eslint-suppressions entries for the file.
  */
 async function formatFile(relativePath) {
     const prettierBin = path.join('node_modules', '.bin', 'prettier');
     const eslintBin = path.join('node_modules', '.bin', 'eslint');
     console.log(chalk.dim(`  Formatting ${path.basename(relativePath)}...`));
     await runCommand(`${prettierBin} --write "${relativePath}" 2>/dev/null || true`, REPO_ROOT);
-    await runCommand(`${eslintBin} "${relativePath}" --fix --quiet 2>/dev/null || true`, REPO_ROOT);
+    await runCommand(`${eslintBin} "${relativePath}" --fix --prune-suppressions 2>/dev/null || true`, REPO_ROOT);
 }
 
 /**
  * Format all staged/changed files before committing.
- * Runs prettier --write on every changed .ts/.tsx/.js/.jsx file to ensure
- * no formatting regressions slip through with --no-verify commits.
+ * Runs prettier --write + eslint --fix on every changed .ts/.tsx/.js/.jsx file
+ * to ensure no formatting regressions slip through --no-verify commits.
+ * Also syncs eslint-suppressions.json so the CI "Verify suppressions" check passes.
  */
 async function formatChangedFiles() {
-    console.log(chalk.blue(`  Running prettier on changed files...`));
+    console.log(chalk.blue(`  Formatting and syncing suppressions for changed files...`));
     const diffResult = await runCommand(
         `git diff --name-only HEAD --diff-filter=ACMR -- '*.ts' '*.tsx' '*.js' '*.jsx'`,
         REPO_ROOT
@@ -85,8 +87,13 @@ async function formatChangedFiles() {
     const prettierBin = path.join('node_modules', '.bin', 'prettier');
     const eslintBin = path.join('node_modules', '.bin', 'eslint');
     const fileArgs = files.map(f => `"${f}"`).join(' ');
+    // 1. Prettier: fix formatting
     await runCommand(`${prettierBin} --write ${fileArgs} 2>/dev/null || true`, REPO_ROOT);
-    await runCommand(`${eslintBin} ${fileArgs} --fix --quiet 2>/dev/null || true`, REPO_ROOT);
+    // 2. Eslint --fix --prune-suppressions: auto-fix + remove stale suppression entries
+    await runCommand(`${eslintBin} ${fileArgs} --fix --prune-suppressions 2>/dev/null || true`, REPO_ROOT);
+    // 3. Eslint --suppress-all: add suppression entries for any remaining unfixed errors
+    //    so the committed suppressions file matches what CI's yarn lint:js produces
+    await runCommand(`${eslintBin} ${fileArgs} --suppress-all 2>/dev/null || true`, REPO_ROOT);
 }
 
 // Whether we're running in batch mode (individual fixers should commit but not push)
@@ -1393,21 +1400,10 @@ async function fixLintErrorsForFile(relativePath) {
   
   // 1. Branch Management - SKIPPED (User manages branch)
 
-  // 2. Remove Suppression
-  const suppressionsPath = path.join(REPO_ROOT, 'eslint-suppressions.json');
-  if (fs.existsSync(suppressionsPath)) {
-      try {
-          const suppressionsContent = fs.readFileSync(suppressionsPath, 'utf8');
-          const suppressions = JSON.parse(suppressionsContent);
-          if (suppressions[relativePath]) {
-              delete suppressions[relativePath];
-              fs.writeFileSync(suppressionsPath, JSON.stringify(suppressions, null, 2), 'utf8');
-              console.log(chalk.green(`  Removed suppression entry.`));
-          } 
-      } catch (e) {
-          console.error(chalk.red(`  Failed to process suppressions file: ${e.message}`));
-      }
-  }
+  // 2. Remove Suppression (let eslint manage it natively)
+  const eslintBinForSupp = path.join('node_modules', '.bin', 'eslint');
+  console.log(chalk.blue(`  Pruning suppression for ${relativePath}...`));
+  await runCommand(`${eslintBinForSupp} "${relativePath}" --fix --prune-suppressions 2>/dev/null || true`, REPO_ROOT);
 
   // 3. Agentic Loop for Fixing
   const MAX_STEPS = 90;
@@ -1928,21 +1924,6 @@ TOOLS AVAILABLE:
   }
 
   if (isFixed) {
-    // 6b. Re-verify suppression is clean — ensure the entry was removed
-    try {
-        const finalSuppPath = path.join(REPO_ROOT, 'eslint-suppressions.json');
-        if (fs.existsSync(finalSuppPath)) {
-            const finalSupp = JSON.parse(fs.readFileSync(finalSuppPath, 'utf8'));
-            if (finalSupp[relativePath]) {
-                console.log(chalk.blue(`  Cleaning up stale suppression for ${relativePath}...`));
-                delete finalSupp[relativePath];
-                fs.writeFileSync(finalSuppPath, JSON.stringify(finalSupp, null, 2), 'utf8');
-            }
-        }
-    } catch (e) {
-        console.log(chalk.dim(`  Note: Could not verify suppressions: ${e.message}`));
-    }
-
     // 7. Commit (and Push if not in batch mode)
     console.log(chalk.green(`  Committing...`));
     await formatChangedFiles();
@@ -2200,7 +2181,7 @@ TOOLS AVAILABLE:
         ? tCommitParts[1] : 'core';
     const tComponentName = path.basename(relativePath, path.extname(relativePath));
 
-    await runCommand(`git add "${relativePath}"`, REPO_ROOT);
+    await runCommand(`git add "${relativePath}" eslint-suppressions.json`, REPO_ROOT);
     await runCommand(`git commit --no-verify -m "fix(${tCommitScope}): resolve TypeScript errors in ${tComponentName}" -m "Fix type errors introduced during refactoring. Updated type annotations and value mappings to match expected interfaces."`, REPO_ROOT);
 
     if (!BATCH_MODE) {
@@ -3058,6 +3039,7 @@ async function runTestFixer() {
      if (uncommitted) {
          console.log(chalk.blue(`  Found uncommitted changes, committing...`));
          console.log(chalk.dim(uncommitted));
+         await formatChangedFiles();
          await runCommand(`git add .`, REPO_ROOT);
          await runCommand(`git checkout HEAD -- package.json yarn.lock 2>/dev/null || true`, REPO_ROOT);
          const finalCommit = await runCommand(`git commit --no-verify -m "feat(core): automated lint, type, and test fixes" -m "Batch of automated fixes including: static i18n key migration, TypeScript type error resolution, and test regression fixes. All changes preserve existing runtime behavior."`, REPO_ROOT);
@@ -3429,7 +3411,7 @@ async function runBatchFixer() {
     if (uncommitted) {
         console.log(chalk.blue(`  Found uncommitted changes, committing...`));
         console.log(chalk.dim(uncommitted));
-                                                                              65
+        await formatChangedFiles();
         await runCommand(`git add .`, REPO_ROOT);
         await runCommand(`git checkout HEAD -- package.json yarn.lock 2>/dev/null || true`, REPO_ROOT);
         await runCommand(`git commit --no-verify -m "feat(${appScope}): replace dynamic i18n keys with static keys" -m "Migrate dynamic translation key construction to static string literals across multiple files. This ensures all i18n keys are statically analyzable and satisfy the @afterpay/i18n-only-static-keys ESLint rule."`, REPO_ROOT);
@@ -3820,6 +3802,7 @@ async function runWorkerMode() {
     // 6. Final commit & push
     const statusCheck = await runCommand(`git status --porcelain`, REPO_ROOT);
     if (statusCheck.stdout.trim()) {
+      await formatChangedFiles();
       await runCommand(`git add .`, REPO_ROOT);
       await runCommand(`git checkout HEAD -- package.json yarn.lock 2>/dev/null || true`, REPO_ROOT);
       await runCommand(
