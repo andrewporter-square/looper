@@ -71,7 +71,7 @@ async function buildkiteApiFetch(apiPath, maxChars = 500000) {
   if (!token) return null;
   try {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 20000);
+    const timeout = setTimeout(() => controller.abort(), 30000);
     const response = await fetch(`${BUILDKITE_API}${apiPath}`, {
       signal: controller.signal,
       headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' },
@@ -81,6 +81,86 @@ async function buildkiteApiFetch(apiPath, maxChars = 500000) {
     const body = await response.text();
     return body.slice(0, maxChars);
   } catch { return null; }
+}
+
+/**
+ * Extract error-relevant sections from a CI build log.
+ * Scans the ENTIRE log for error patterns and returns the surrounding context,
+ * rather than blindly taking the last N lines.
+ */
+function extractErrorSections(rawLog, maxChars = 12000) {
+  // Strip ANSI escape codes
+  const cleaned = rawLog.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '');
+  const lines = cleaned.split('\n');
+
+  // Patterns that indicate an error or failure
+  const errorPatterns = /\b(ERROR|FAIL(ED|URE|ING)?|FATAL|EXCEPTION|PANIC|ABORT(ED)?|CRASH|Traceback|SyntaxError|TypeError|ReferenceError|RangeError|AssertionError|ModuleNotFoundError|ImportError|CompileError|BUILD FAILED|COMPILATION ERROR|Cannot find|Could not|Unexpected token|Permission denied|ENOENT|EACCES|ECONNREFUSED|exit code [1-9]|exit status [1-9]|npm ERR!|yarn error|error TS\d|error\[E\d|\.tsx?:\d+:\d+.*error|jest\.fn|expect\(|TIMED? ?OUT|timed out|timeout|❌|✘|✗|^\s*>?\s*\d+\s*\|.*Error|at .+\(.+:\d+:\d+\))/i;
+
+  // Patterns for section headers / test suite boundaries that help provide context
+  const sectionPatterns = /^(={3,}|─{3,}|#{2,}|FAIL |PASS |Test Suites?:|Tests?:|Snapshots?:|Time:|Ran all|Summary|Results|SUMMARY|---)/;
+
+  // First pass: mark lines that are errors or within N lines of an error
+  const CONTEXT_BEFORE = 5;
+  const CONTEXT_AFTER = 15;
+  const errorLineIndices = new Set();
+
+  for (let i = 0; i < lines.length; i++) {
+    if (errorPatterns.test(lines[i])) {
+      // Include context window around each error line
+      for (let j = Math.max(0, i - CONTEXT_BEFORE); j <= Math.min(lines.length - 1, i + CONTEXT_AFTER); j++) {
+        errorLineIndices.add(j);
+      }
+    }
+  }
+
+  // If no error patterns found, fall back to last 300 lines
+  if (errorLineIndices.size === 0) {
+    const fallback = lines.slice(-300).join('\n');
+    return fallback.slice(-maxChars);
+  }
+
+  // Second pass: merge adjacent regions and build output with section markers
+  const sortedIndices = [...errorLineIndices].sort((a, b) => a - b);
+  const sections = [];
+  let currentSection = [];
+  let lastIndex = -999;
+
+  for (const idx of sortedIndices) {
+    if (idx - lastIndex > 3) {
+      // Gap — start a new section
+      if (currentSection.length > 0) {
+        sections.push(currentSection.join('\n'));
+      }
+      currentSection = [];
+      if (sections.length > 0 || idx > CONTEXT_BEFORE) {
+        currentSection.push(`\n... [skipped to line ${idx + 1}/${lines.length}] ...`);
+      }
+    }
+    currentSection.push(lines[idx]);
+    lastIndex = idx;
+  }
+  if (currentSection.length > 0) {
+    sections.push(currentSection.join('\n'));
+  }
+
+  // Always include the very last few lines (summary / exit code)
+  const tailLines = lines.slice(-15).join('\n');
+  const lastSectionEnd = sortedIndices[sortedIndices.length - 1] || 0;
+  if (lastSectionEnd < lines.length - 20) {
+    sections.push(`\n... [skipped to end, line ${lines.length - 14}/${lines.length}] ...\n${tailLines}`);
+  }
+
+  let result = sections.join('\n');
+
+  // Trim to maxChars, preferring to keep the end (often has summary)
+  if (result.length > maxChars) {
+    // Keep first 30% and last 70%
+    const headBudget = Math.floor(maxChars * 0.3);
+    const tailBudget = maxChars - headBudget - 50; // 50 for the truncation marker
+    result = result.slice(0, headBudget) + '\n\n... [truncated middle] ...\n\n' + result.slice(-tailBudget);
+  }
+
+  return result;
 }
 
 /**
@@ -154,13 +234,14 @@ async function gatherPRCIContext() {
         logs += '\nAnnotations:\n' + annotResult.stdout.trim();
       }
 
-      // Get failed job logs
+      // Get failed job logs — fetch full output and extract error sections
       const logResult = await runCommand(
-        `gh run view ${runId} --log-failed 2>&1 | tail -200`,
+        `gh run view ${runId} --log-failed 2>&1`,
         REPO_ROOT
       );
       if (logResult.success && logResult.stdout.trim().length > 30) {
-        logs += '\nFailed job logs:\n' + logResult.stdout.trim();
+        const errorExcerpt = extractErrorSections(logResult.stdout, 12000);
+        logs += '\nFailed job logs:\n' + errorExcerpt;
       }
     }
 
@@ -192,20 +273,19 @@ async function gatherPRCIContext() {
 
             // Fetch job log
             const jobLog = await buildkiteApiFetch(
-              `/organizations/${org}/pipelines/${pipeline}/builds/${buildNumber}/jobs/${job.id}/log`
+              `/organizations/${org}/pipelines/${pipeline}/builds/${buildNumber}/jobs/${job.id}/log`,
+              2000000 // Allow up to 2MB for large logs
             );
             if (jobLog) {
               try {
                 const logData = JSON.parse(jobLog);
                 const content = logData.content || logData.output || '';
-                // Strip ANSI, take last 200 lines
-                const cleaned = content
-                  .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '')
-                  .split('\n').slice(-200).join('\n');
-                logs += '\n' + cleaned;
+                // Scan full log for error sections instead of just taking the tail
+                const errorExcerpt = extractErrorSections(content, 12000);
+                logs += '\n' + errorExcerpt;
               } catch {
-                const cleaned = jobLog.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '');
-                logs += '\n' + cleaned.split('\n').slice(-200).join('\n');
+                const errorExcerpt = extractErrorSections(jobLog, 12000);
+                logs += '\n' + errorExcerpt;
               }
             }
           }
@@ -1297,13 +1377,19 @@ async function fixLintErrorsForFile(relativePath) {
   let isFixed = false;
   let consecutiveNoToolCalls = 0;
 
-  // Initial Lint
   // Use local binary to ensure specific file targeting
   const eslintBin = path.join('node_modules', '.bin', 'eslint');
+
+  // 3a. Auto-fix pass: run eslint --fix first to resolve trivially fixable rules
+  // (prettier/prettier, import ordering, simple-import-sort, etc.)
+  console.log(chalk.blue(`  Running eslint --fix for auto-fixable rules...`));
+  await runCommand(`${eslintBin} "${relativePath}" --fix --quiet`, REPO_ROOT);
+
+  // Initial Lint — check what remains after auto-fix
   let lintResult = await runCommand(`${eslintBin} "${relativePath}" --quiet`, REPO_ROOT);
   
   if (lintResult.success) {
-      console.log(chalk.green(`  ✅ File is already clean!`));
+      console.log(chalk.green(`  ✅ File is clean after eslint --fix (auto-fixed only)!`));
       return;
   }
 
@@ -1328,6 +1414,177 @@ async function fixLintErrorsForFile(relativePath) {
       if (fs.existsSync(tsconfigPath)) {
           tsconfigInfo = `\ntsconfig.json location: ${pkgDir}/tsconfig.json`;
       }
+  }
+
+  // --- Pre-research: trace dynamic i18n keys to their type definitions ---
+  // Detect t(`...${variable}...`) patterns and resolve the variable's type
+  let dynamicKeyResearch = '';
+  const lintOutput = lintResult.stdout + lintResult.stderr;
+  const hasI18nStaticKeysError = /i18n-only-static-keys/.test(lintOutput);
+  
+  if (hasI18nStaticKeysError) {
+    console.log(chalk.blue(`  🔍 Pre-researching dynamic i18n key types...`));
+    
+    // Find all template literal t() calls with dynamic expressions
+    const dynamicTCalls = [...initialFileContent.matchAll(/t\(`([^`]*)\$\{([^}]+)\}([^`]*)`/g)];
+    // Also find ternary t() calls: t(cond ? 'a' : 'b')
+    const ternaryTCalls = [...initialFileContent.matchAll(/t\(([^)]+\?[^)]+:[^)]+)\)/g)];
+    
+    const researchSections = [];
+    const tracedVars = new Set();
+    
+    for (const match of dynamicTCalls) {
+      const [fullMatch, prefix, expr, suffix] = match;
+      // Extract the core variable name from expressions like error?.error, reason, bankAccountReason
+      const varName = expr.replace(/\?\./g, '.').replace(/\s+as\s+\w+/g, '').trim().split('.').pop().trim();
+      const fullExpr = expr.trim();
+      
+      if (tracedVars.has(varName)) continue;
+      tracedVars.add(varName);
+      
+      console.log(chalk.dim(`    Tracing type of: ${fullExpr}`));
+      
+      // Strategy 1: Search for the variable's type annotation in the file
+      // Look for destructuring like `{ reason }`, `const reason`, or function params
+      const typePatterns = [
+        // Destructured from hook: const { card, valid, reason } = usePreferredCard()
+        new RegExp(`\\{[^}]*\\b${varName}\\b[^}]*\\}\\s*=\\s*(\\w+)`, 'g'),
+        // Direct: const reason: SomeType = ...
+        new RegExp(`\\b${varName}\\s*:\\s*([\\w|<>\\[\\]]+)`, 'g'),
+        // Function call that returns it
+        new RegExp(`\\b${varName}\\b.*=\\s*(use\\w+|get\\w+)\\(`, 'g'),
+      ];
+      
+      const typeHints = [];
+      for (const pat of typePatterns) {
+        const matches = [...initialFileContent.matchAll(pat)];
+        for (const m of matches) {
+          typeHints.push(m[0].trim());
+        }
+      }
+      
+      // Strategy 2: Search for type/enum definitions in the codebase
+      // First check imports for type names that might match
+      const potentialTypes = [];
+      
+      // Check if any imported types match the variable name pattern
+      const importedTypePattern = new RegExp(`import.*\\{[^}]*\\b(\\w*${varName}\\w*(?:Code|Type|Reason|Error|Status|Kind|Variant|Mode)?)\\b[^}]*\\}.*from\\s+['"]([^'"]+)['"]`, 'gi');
+      const importMatches = [...initialFileContent.matchAll(importedTypePattern)];
+      
+      // Also look for "as SomeType" casts near the variable usage
+      const castPattern = new RegExp(`${varName.replace(/[.*+?^${}()|[\]\\]/g, '\\\\$&')}\\s+as\\s+(\\w+)`, 'g');
+      const castMatches = [...initialFileContent.matchAll(castPattern)];
+      for (const cm of castMatches) {
+        potentialTypes.push(cm[1]);
+      }
+      
+      // Also look for Object.values(SomeEnum).includes(variable as SomeEnum)
+      const enumCheckPattern = new RegExp(`Object\\.values\\((\\w+)\\)\\.includes\\(.*${varName.replace(/[.*+?^${}()|[\]\\]/g, '\\\\$&')}`, 'g');
+      const enumCheckMatches = [...initialFileContent.matchAll(enumCheckPattern)];
+      for (const em of enumCheckMatches) {
+        potentialTypes.push(em[1]);
+      }
+      
+      // Resolve each potential type by grepping for its definition
+      const resolvedTypes = [];
+      const allPotentialTypes = [...new Set([...potentialTypes, ...importMatches.map(m => m[1])])];
+      
+      for (const typeName of allPotentialTypes.slice(0, 5)) {
+        // Find where this type is defined
+        const grepResult = await runCommand(
+          `grep -rn "export.*\\b${typeName}\\b\\s*=" apps/ libs/ packages/ --include='*.ts' --include='*.tsx' -l 2>/dev/null | head -5`,
+          REPO_ROOT
+        );
+        if (grepResult.success && grepResult.stdout.trim()) {
+          const defFiles = grepResult.stdout.trim().split('\n');
+          for (const defFile of defFiles.slice(0, 3)) {
+            // Read the type definition (look for enum or type alias)
+            const defContent = await runCommand(
+              `grep -A 30 "export.*\\b${typeName}\\b" "${defFile}" | head -40`,
+              REPO_ROOT
+            );
+            if (defContent.success && defContent.stdout.trim()) {
+              resolvedTypes.push(`\n  Type "${typeName}" from ${defFile}:\n${defContent.stdout.trim()}`);
+            }
+          }
+        }
+      }
+      
+      // Also look for the hook return type if the variable comes from a hook
+      for (const hint of typeHints) {
+        const hookMatch = hint.match(/(use\w+)\(/);
+        if (hookMatch) {
+          const hookName = hookMatch[1];
+          const hookResult = await runCommand(
+            `grep -rn "export.*${hookName}\\|function ${hookName}" apps/ libs/ --include='*.ts' --include='*.tsx' | grep -v 'test\\|spec\\|vitest\\|node_modules' | head -3`,
+            REPO_ROOT
+          );
+          if (hookResult.success && hookResult.stdout.trim()) {
+            const hookFile = hookResult.stdout.trim().split(':')[0];
+            const hookDef = await runCommand(
+              `grep -A 5 "${hookName}" "${hookFile}" | head -10`,
+              REPO_ROOT
+            );
+            if (hookDef.success && hookDef.stdout.trim()) {
+              resolvedTypes.push(`\n  Hook "${hookName}" from ${hookFile}:\n${hookDef.stdout.trim()}`);
+              
+              // Extract the return type and trace it
+              const returnTypeMatch = hookDef.stdout.match(/:\s*([\w<>|]+)\s*(?:=>|{)/);
+              if (returnTypeMatch) {
+                const returnType = returnTypeMatch[1].replace(/\s/g, '');
+                // If it references another type, look that up too
+                const innerTypes = returnType.split('|').map(t => t.trim()).filter(t => /^[A-Z]/.test(t));
+                for (const innerType of innerTypes.slice(0, 3)) {
+                  const innerResult = await runCommand(
+                    `grep -rn -A 20 "export.*\\b${innerType}\\b" apps/ libs/ packages/ --include='*.ts' | head -25`,
+                    REPO_ROOT
+                  );
+                  if (innerResult.success && innerResult.stdout.trim()) {
+                    resolvedTypes.push(`\n  Type "${innerType}":\n${innerResult.stdout.trim()}`);
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+      
+      // Check locale JSON for matching keys
+      const namespace = prefix.split(':')[0] || 'common';
+      const localeDir = path.join(REPO_ROOT, 'apps/checkout/public/locales/en-AU');
+      const localeFile = path.join(localeDir, `${namespace}.json`);
+      let localeKeys = '';
+      if (fs.existsSync(localeFile)) {
+        // Extract keys matching the pattern prefix
+        const keyPrefix = prefix.split(':').slice(1).join(':').replace(/\.$/, '');
+        if (keyPrefix) {
+          const localeResult = await runCommand(
+            `grep '"${keyPrefix}' "${localeFile}" | head -30`,
+            REPO_ROOT
+          );
+          if (localeResult.success && localeResult.stdout.trim()) {
+            localeKeys = `\n  Matching locale keys in ${namespace}.json:\n${localeResult.stdout.trim()}`;
+          }
+        }
+      }
+      
+      if (resolvedTypes.length > 0 || typeHints.length > 0 || localeKeys) {
+        researchSections.push([
+          `\nDYNAMIC KEY: t(\`${prefix}\${${fullExpr}}${suffix}\`)`,
+          `  Variable: ${fullExpr}`,
+          typeHints.length > 0 ? `  Source: ${typeHints.join('; ')}` : '',
+          ...resolvedTypes,
+          localeKeys,
+        ].filter(Boolean).join('\n'));
+      }
+    }
+    
+    if (researchSections.length > 0) {
+      dynamicKeyResearch = `\n\nPRE-RESEARCHED TYPE INFORMATION FOR DYNAMIC i18n KEYS:\n${'='.repeat(60)}\n${researchSections.join('\n\n')}\n${'='.repeat(60)}\n\nUSE THIS INFORMATION to create Record<Type, string> mappings with STATIC t() calls for each possible value. Do NOT skip the research step — the types above tell you exactly which values to enumerate.`;
+      console.log(chalk.green(`  ✅ Found type information for ${researchSections.length} dynamic key variable(s).`));
+    } else {
+      console.log(chalk.dim(`    No type information auto-resolved. Agent will need to trace types manually.`));
+    }
   }
 
   // Agent System Prompt
@@ -1505,6 +1762,11 @@ TOOLS AVAILABLE:
               }
           }
           
+          // Inject auto-traced type information for dynamic i18n keys
+          if (dynamicKeyResearch) {
+              parts.push(dynamicKeyResearch);
+          }
+          
           return parts.filter(Boolean).join('\n');
       })()
     }
@@ -1568,6 +1830,9 @@ TOOLS AVAILABLE:
                          if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
                          fs.writeFileSync(args.path, args.content, 'utf8');
                          
+                         // Auto-fix formatting after agent write (prettier, import order, etc.)
+                         await runCommand(`${eslintBin} "${relativePath}" --fix --quiet`, REPO_ROOT);
+
                          // Verification Step
                          console.log(chalk.blue(`  Verifying...`));
                          lintResult = await runCommand(`${eslintBin} "${relativePath}" --quiet`, REPO_ROOT);
@@ -1625,6 +1890,21 @@ TOOLS AVAILABLE:
   }
 
   if (isFixed) {
+    // 6b. Re-verify suppression is clean — ensure the entry was removed
+    try {
+        const finalSuppPath = path.join(REPO_ROOT, 'eslint-suppressions.json');
+        if (fs.existsSync(finalSuppPath)) {
+            const finalSupp = JSON.parse(fs.readFileSync(finalSuppPath, 'utf8'));
+            if (finalSupp[relativePath]) {
+                console.log(chalk.blue(`  Cleaning up stale suppression for ${relativePath}...`));
+                delete finalSupp[relativePath];
+                fs.writeFileSync(finalSuppPath, JSON.stringify(finalSupp, null, 2), 'utf8');
+            }
+        }
+    } catch (e) {
+        console.log(chalk.dim(`  Note: Could not verify suppressions: ${e.message}`));
+    }
+
     // 7. Commit (and Push if not in batch mode)
     console.log(chalk.green(`  Committing...`));
     
