@@ -96,6 +96,51 @@ async function formatChangedFiles() {
     await runCommand(`${eslintBin} ${fileArgs} --suppress-all 2>/dev/null || true`, REPO_ROOT);
 }
 
+/**
+ * Format all files changed on this branch vs master.
+ * Unlike formatChangedFiles() which only targets uncommitted changes,
+ * this catches formatting regressions in already-committed code —
+ * e.g. files that were committed before the prettier auto-fix existed.
+ * Runs prettier --write + eslint --fix on every branch-changed .ts/.tsx/.js/.jsx file.
+ */
+async function formatBranchFiles() {
+    console.log(chalk.blue(`  Formatting all branch-changed files vs ${MAIN_BRANCH}...`));
+    const diffResult = await runCommand(
+        `git diff --name-only origin/${MAIN_BRANCH}...HEAD -- '*.ts' '*.tsx' '*.js' '*.jsx'`,
+        REPO_ROOT
+    );
+    const files = diffResult.stdout.trim().split('\n').filter(f => f && fs.existsSync(path.join(REPO_ROOT, f)));
+    if (files.length === 0) {
+        console.log(chalk.dim(`  No branch-changed JS/TS files found.`));
+        return false;
+    }
+    const prettierBin = path.join('node_modules', '.bin', 'prettier');
+    const eslintBin = path.join('node_modules', '.bin', 'eslint');
+    // Process in batches to avoid arg-too-long errors
+    const BATCH_SIZE = 20;
+    for (let i = 0; i < files.length; i += BATCH_SIZE) {
+        const batch = files.slice(i, i + BATCH_SIZE);
+        const fileArgs = batch.map(f => `"${f}"`).join(' ');
+        await runCommand(`${prettierBin} --write ${fileArgs} 2>/dev/null || true`, REPO_ROOT);
+        await runCommand(`${eslintBin} ${fileArgs} --fix --prune-suppressions 2>/dev/null || true`, REPO_ROOT);
+    }
+    // Check if anything changed
+    const statusResult = await runCommand(`git status --porcelain -- '*.ts' '*.tsx' '*.js' '*.jsx'`, REPO_ROOT);
+    const changed = statusResult.stdout.trim().length > 0;
+    if (changed) {
+        console.log(chalk.yellow(`  Found formatting issues in committed files. Fixing...`));
+        // Also suppress any remaining errors so eslint-suppressions stays in sync
+        const allFileArgs = files.map(f => `"${f}"`).join(' ');
+        await runCommand(`${eslintBin} ${allFileArgs} --suppress-all 2>/dev/null || true`, REPO_ROOT);
+        await runCommand(`git add . && git checkout HEAD -- package.json yarn.lock 2>/dev/null || true`, REPO_ROOT);
+        await runCommand(`git commit --no-verify -m "fix: auto-format branch files (prettier + eslint)"`, REPO_ROOT);
+        console.log(chalk.bold.green(`  ✅ Formatting fixes committed.`));
+        return true;
+    }
+    console.log(chalk.bold.green(`  ✅ All branch files properly formatted.`));
+    return false;
+}
+
 // Whether we're running in batch mode (individual fixers should commit but not push)
 let BATCH_MODE = false;
 
@@ -2977,6 +3022,10 @@ async function runTestFixer() {
          console.log(chalk.bold.green(`  ✅ No obsolete suppressions found.`));
      }
 
+     // 3b. Format all branch-changed files (catch formatting regressions in already-committed code)
+     console.log(chalk.yellow(`\n  Formatting branch files to prevent CI prettier failures...`));
+     await formatBranchFiles();
+
      // 3c. E2E Tests (Playwright via Docker — validates the app actually works end-to-end)
      if (!process.argv.includes('--skip-e2e')) {
        console.log(chalk.yellow(`\n  Running E2E smoke tests to validate changes...`));
@@ -3418,6 +3467,8 @@ async function runBatchFixer() {
     }
 
     // Always push the branch (individual fixers commit but don't push in batch mode)
+    // First, format all branch files to prevent CI prettier failures
+    await formatBranchFiles();
     console.log(chalk.yellow(`  Pushing branch to origin...`));
     const pushResult = await runCommand(`git push --no-verify -u origin HEAD:refs/heads/${branchName}`, REPO_ROOT);
     if (pushResult.success) {
@@ -3798,6 +3849,10 @@ async function runWorkerMode() {
     if (pruneStatus.stdout.trim().length > 0) {
       console.log(`  Suppressions file updated.`);
     }
+
+    // 5b. Format branch files to prevent CI prettier failures
+    console.log(`\n  Formatting branch files...`);
+    await formatBranchFiles();
 
     // 6. Final commit & push
     const statusCheck = await runCommand(`git status --porcelain`, REPO_ROOT);
