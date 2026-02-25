@@ -77,11 +77,11 @@ node index.js --auto-fix
 
 ### `--check-prs` — PR Health Checker
 
-Scans all open looper PRs, checks CI status, fetches failure logs, and optionally auto-fixes issues.
+Scans all open looper PRs, checks CI status, fetches failure logs, and optionally auto-fixes issues using the **full fix pipeline** (same as `index.js --auto-fix`).
 
 ```bash
 node check-prs.js                  # List & check all looper PRs
-node check-prs.js --fix            # Fix CI failures + review comments
+node check-prs.js --fix            # Fix CI failures (full pipeline) + review comments
 node check-prs.js --fix-comments   # Only fix review comment feedback
 node check-prs.js --author @me     # Filter by author (default: @me)
 node check-prs.js --label checkout # Filter by label
@@ -89,8 +89,8 @@ node check-prs.js --label checkout # Filter by label
 
 **Features:**
 - Detects and auto-fixes "PR description too short" validation errors
-- Fetches GitHub Actions failure logs
-- Uses AI to analyze and fix code failures
+- Fetches Buildkite & GitHub Actions failure logs
+- **`--fix` runs the full pipeline per PR**: merge master → yarn install → Jest/Vitest → fix tests → global lint → fix lint → type check → fix types → prune suppressions → format branch files → commit → push
 - Reads PR review comments, triages actionable feedback, and applies fixes
 
 ### Interactive Agent (default)

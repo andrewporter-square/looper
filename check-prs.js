@@ -8,7 +8,7 @@
  *
  * Usage:
  *   node check-prs.js                  # list & check all looper PRs
- *   node check-prs.js --fix            # fix CI failures + review comments
+ *   node check-prs.js --fix            # run full fix pipeline per failing PR (same as index.js --auto-fix)
  *   node check-prs.js --fix-comments   # only fix review comment feedback
  *   node check-prs.js --author @me     # filter by author (default: @me)
  *   node check-prs.js --label checkout # filter by label
@@ -1040,175 +1040,116 @@ function formatPlaywrightReport(pwInfo, artifacts, localResults) {
   return sections.join('\n');
 }
 
-// ─── Fix a failing PR ───────────────────────────────────────────────────────
+// ─── Fix a failing PR (full pipeline — same as index.js --auto-fix) ─────────
 
 async function fixFailingPR(pr, failedChecks, failureLogs) {
-  console.log(chalk.yellow(`\n  🔧 Attempting to fix PR #${pr.number}: ${pr.title}`));
+  console.log(chalk.bold.yellow(`\n  🔧 Fixing PR #${pr.number}: ${pr.title}`));
+  console.log(chalk.cyan(`  Running full fix pipeline (lint → tests → types → suppressions → format → push)...`));
 
-  // Checkout the branch
   const branch = pr.headRefName;
+
+  // 1. Check out the PR branch
   await runCommand(`git fetch origin ${branch}`, REPO_ROOT);
   await runCommand(`git checkout ${branch}`, REPO_ROOT);
   await runCommand(`git pull origin ${branch} --no-edit`, REPO_ROOT);
 
-  // Determine what files were changed in this PR
-  const changedResult = await runCommand(
-    `git diff --name-only origin/${MAIN_BRANCH}...HEAD`,
-    REPO_ROOT
-  );
-  const changedFiles = changedResult.stdout.trim().split('\n').filter(Boolean);
-  const tsFiles = changedFiles.filter(f => /\.(tsx?|jsx?)$/.test(f));
+  // 2. Write CI failure context so the AI agent inside index.js has full context
+  const contextFile = path.resolve(__dirname, 'server-error-context.txt');
+  const existingContext = fs.existsSync(contextFile) ? fs.readFileSync(contextFile, 'utf8').trim() : '';
 
-  // Combine all failure context
-  const failureContext = failedChecks.map((check, i) => {
+  const ciContext = failedChecks.map((check, i) => {
     const logEntry = failureLogs[i];
-    return `### Check: ${check.name} (${check.state})\nLink: ${check.link || 'N/A'}\n\n${logEntry?.logs || 'No logs'}\n`;
-  }).join('\n---\n');
+    return [
+      `### CI Check: ${check.name} (${check.state})`,
+      `Link: ${check.link || 'N/A'}`,
+      '',
+      (logEntry?.logs || 'No logs').slice(0, 8000),
+    ].join('\n');
+  }).join('\n\n---\n\n');
 
-  // Use OpenAI to analyze and fix
-  const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  const fullContext = [
+    existingContext,
+    '',
+    '## CI FAILURE CONTEXT (injected by check-prs.js)',
+    '',
+    ciContext,
+  ].filter(Boolean).join('\n');
+  fs.writeFileSync(contextFile, fullContext, 'utf8');
 
-  // Read the changed files
-  const fileContents = {};
-  for (const f of tsFiles.slice(0, 10)) {
-    const fullPath = path.join(REPO_ROOT, f);
-    if (fs.existsSync(fullPath)) {
-      fileContents[f] = fs.readFileSync(fullPath, 'utf8');
-    }
-  }
+  // 3. Spawn the full fix pipeline: index.js --auto-fix --skip-e2e
+  //    This runs the same pipeline as a single-branch fix:
+  //    merge master → yarn install → gather CI context → Jest/Vitest → fix tests →
+  //    global lint check → fix lint → type check → fix types → prune suppressions →
+  //    format branch files → commit → push
+  const startTime = Date.now();
 
-  const fileContentsSummary = Object.entries(fileContents)
-    .map(([f, c]) => `--- ${f} ---\n${c}`)
-    .join('\n\n');
+  const result = await new Promise((resolve) => {
+    const child = require('child_process').spawn(
+      process.execPath,
+      [path.join(__dirname, 'index.js'), '--auto-fix', '--skip-e2e'],
+      {
+        env: {
+          ...process.env,
+          LOOPER_REPO_ROOT: REPO_ROOT,
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+        cwd: __dirname,
+      }
+    );
 
-  const messages = [
-    {
-      role: 'system',
-      content: `You are a Senior Software Engineer fixing CI failures on a TypeScript/React monorepo PR.
+    let stdout = '';
+    let stderr = '';
 
-The PR branch is: ${branch}
-Changed files: ${changedFiles.join(', ')}
-
-Your job is to analyze the CI failure logs and determine what needs to be fixed.
-Output a JSON object with this schema:
-{
-  "analysis": "Brief description of what's failing and why",
-  "fixable": true/false,
-  "fixes": [
-    {
-      "file": "relative/path/to/file.ts",
-      "description": "What to change",
-      "search": "exact text to find (multi-line ok)",
-      "replace": "exact replacement text"
-    }
-  ]
-}
-
-RULES:
-- Only output the JSON object, no markdown fences or commentary.
-- "search" must be an exact substring of the current file content.
-- If you can't determine a fix from the logs, set fixable to false with an explanation in analysis.
-- Preserve runtime behavior; only fix the CI issue.
-- Common issues: lint errors, type errors, test failures from changed translations/logic.`,
-    },
-    {
-      role: 'user',
-      content: `## CI Failure Logs\n\n${failureContext}\n\n## Changed File Contents\n\n${fileContentsSummary}`,
-    },
-  ];
-
-  try {
-    console.log(chalk.gray('  Analyzing failures with AI...'));
-    const response = await client.chat.completions.create({
-      model: 'gpt-5.2-2025-12-11',
-      messages,
-      temperature: 0,
-      max_completion_tokens: 4096,
+    child.stdout.on('data', (data) => {
+      const lines = data.toString().split('\n').filter(Boolean);
+      lines.forEach(line => console.log(chalk.dim(`    ${line}`)));
+      stdout += data.toString();
     });
 
-    const content = response.choices[0].message.content.trim();
+    child.stderr.on('data', (data) => {
+      const lines = data.toString().split('\n').filter(Boolean);
+      lines.forEach(line => console.log(chalk.dim(`    ${line}`)));
+      stderr += data.toString();
+    });
 
-    let result;
-    try {
-      // Strip markdown fences if present
-      const jsonStr = content.replace(/^```json?\n?/m, '').replace(/\n?```$/m, '');
-      result = JSON.parse(jsonStr);
-    } catch (e) {
-      console.log(chalk.red(`  Failed to parse AI response: ${e.message}`));
-      console.log(chalk.dim(`  Raw response: ${content.slice(0, 500)}`));
-      return false;
+    child.on('close', (code) => {
+      resolve({ success: code === 0, code, stdout, stderr });
+    });
+
+    child.on('error', (err) => {
+      resolve({ success: false, code: -1, error: err.message, stdout: '', stderr: '' });
+    });
+  });
+
+  const elapsed = ((Date.now() - startTime) / 1000).toFixed(0);
+
+  // 4. Restore the context file
+  if (existingContext) {
+    fs.writeFileSync(contextFile, existingContext, 'utf8');
+  } else {
+    try { fs.unlinkSync(contextFile); } catch (_) {}
+  }
+
+  if (result.success) {
+    console.log(chalk.bold.green(`  ✅ Full fix pipeline completed for PR #${pr.number} (${elapsed}s)`));
+
+    // Check if any commits were pushed
+    const pushMatch = result.stdout.match(/pushed to|Branch pushed|Push.*success/i);
+    if (pushMatch) {
+      console.log(chalk.green(`  🚀 Changes pushed to ${branch}. CI should re-run.`));
+    }
+    return true;
+  } else {
+    console.log(chalk.red(`  ❌ Fix pipeline exited with code ${result.code} after ${elapsed}s`));
+
+    // Show last few lines of output for debugging
+    const allOutput = result.stdout + result.stderr;
+    const lastLines = allOutput.split('\n').filter(Boolean).slice(-10).join('\n');
+    if (lastLines) {
+      console.log(chalk.dim(`  Last output:`));
+      console.log(chalk.dim(lastLines.replace(/^/gm, '    ')));
     }
 
-    console.log(chalk.cyan(`  Analysis: ${result.analysis}`));
-
-    if (!result.fixable || !result.fixes || result.fixes.length === 0) {
-      console.log(chalk.yellow(`  AI determined this is not auto-fixable.`));
-      return false;
-    }
-
-    // Apply fixes
-    let appliedCount = 0;
-    for (const fix of result.fixes) {
-      const filePath = path.join(REPO_ROOT, fix.file);
-      if (!fs.existsSync(filePath)) {
-        console.log(chalk.red(`  File not found: ${fix.file}`));
-        continue;
-      }
-
-      const content = fs.readFileSync(filePath, 'utf8');
-      if (!content.includes(fix.search)) {
-        console.log(chalk.red(`  Search string not found in ${fix.file}: "${fix.search.slice(0, 80)}..."`));
-        continue;
-      }
-
-      const newContent = content.replace(fix.search, fix.replace);
-      fs.writeFileSync(filePath, newContent, 'utf8');
-      console.log(chalk.green(`  ✅ Applied fix to ${fix.file}: ${fix.description}`));
-      appliedCount++;
-    }
-
-    if (appliedCount === 0) {
-      console.log(chalk.yellow(`  No fixes could be applied.`));
-      return false;
-    }
-
-    // Re-run lint on changed files to validate
-    console.log(chalk.yellow(`  Validating fixes...`));
-    const eslintBin = path.join('node_modules', '.bin', 'eslint');
-    for (const f of tsFiles) {
-      const lintResult = await runCommand(`${eslintBin} "${f}" --quiet`, REPO_ROOT);
-      if (!lintResult.success) {
-        console.log(chalk.yellow(`  ⚠️ Lint still failing on ${f} — skipping commit`));
-        await runCommand(`git checkout -- .`, REPO_ROOT);
-        return false;
-      }
-    }
-
-    // Commit and push
-    await runCommand(`git add .`, REPO_ROOT);
-    await runCommand(`git checkout HEAD -- package.json yarn.lock 2>/dev/null || true`, REPO_ROOT);
-    const commitResult = await runCommand(
-      `git commit --no-verify -m "fix: address CI failures" -m "Auto-fix applied by looper PR health checker based on CI failure logs."`,
-      REPO_ROOT
-    );
-    if (!commitResult.success) {
-      console.log(chalk.yellow(`  Nothing to commit (fixes may have been no-ops).`));
-      return false;
-    }
-
-    const pushResult = await runCommand(
-      `git push --no-verify origin HEAD:refs/heads/${branch}`,
-      REPO_ROOT
-    );
-    if (pushResult.success) {
-      console.log(chalk.bold.green(`  🚀 Fix pushed to ${branch}. CI should re-run.`));
-      return true;
-    } else {
-      console.log(chalk.red(`  Push failed: ${pushResult.stderr.slice(0, 300)}`));
-      return false;
-    }
-  } catch (e) {
-    console.log(chalk.red(`  AI fix failed: ${e.message}`));
     return false;
   }
 }
@@ -1517,7 +1458,7 @@ async function main() {
   console.log(chalk.gray(`  Repo: ${REPO_ROOT}`));
   console.log(chalk.gray(`  Author: ${author}`));
   if (label) console.log(chalk.gray(`  Label: ${label}`));
-  console.log(chalk.gray(`  Auto-fix: ${shouldFix ? 'enabled' : 'disabled (use --fix to enable)'}`));
+  console.log(chalk.gray(`  Auto-fix: ${shouldFix ? 'enabled (full pipeline per PR)' : 'disabled (use --fix to enable)'}`));
   console.log(chalk.gray(`  Fix comments: ${shouldFixComments ? 'enabled' : 'disabled (use --fix or --fix-comments)'}`));
   console.log(chalk.gray(`  Run tests: ${shouldRunTests ? 'enabled' : 'disabled (use --run-tests to enable)'}`));
   console.log();
