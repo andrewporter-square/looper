@@ -1,8 +1,8 @@
 # Looper
 
-**Automated ESLint, TypeScript, and test fixer agent for the Rocketship monorepo.**
+**Automated ESLint, TypeScript, test, and E2E fixer agent for the Rocketship monorepo.**
 
-Looper uses OpenAI to automatically fix lint violations (especially `@afterpay/i18n-only-static-keys`), TypeScript type errors, and failing tests across the Rocketship codebase. It creates branches, applies fixes, runs validation, and opens PRs — all automated.
+Looper uses OpenAI to automatically fix lint violations (especially `@afterpay/i18n-only-static-keys`), TypeScript type errors, failing unit/integration tests, and Playwright E2E tests across the Rocketship codebase. It creates branches, applies fixes, runs validation, and opens PRs — all automated.
 
 ## Quick Start
 
@@ -13,7 +13,7 @@ npm install
 
 # 2. Configure
 cp .env.example .env
-# Edit .env with your OPENAI_API_KEY and LOOPER_REPO_ROOT
+# Edit .env with your OPENAI_API_KEY, LOOPER_REPO_ROOT, and BUILDKITE_TOKEN
 
 # 3. Add files to fix
 echo '["apps/checkout/src/page/example/Example.tsx"]' > list.json
@@ -31,6 +31,8 @@ node index.js --parallel
 | Git | 2.30+ | With push access to Rocketship |
 | OpenAI API key | — | Needs GPT-4o / GPT-5 access |
 | Rocketship repo | — | Cloned locally with `yarn install` done |
+| Docker Desktop | — | Required for E2E tests (optional otherwise) |
+| AWS CLI + saml2aws | — | Required for E2E Docker image pulls (optional otherwise) |
 
 ## Configuration
 
@@ -41,6 +43,7 @@ All configuration is via environment variables (`.env` file):
 | `OPENAI_API_KEY` | Yes | — | OpenAI API key |
 | `LOOPER_REPO_ROOT` | No | `/Users/aporter/Development/rocketship` | Path to local Rocketship checkout |
 | `LOOPER_CONCURRENCY` | No | `3` | Number of parallel workers for `--parallel` mode |
+| `BUILDKITE_TOKEN` | No | — | Buildkite API token for fetching CI build logs |
 
 ## Modes
 
@@ -56,7 +59,7 @@ node index.js --parallel
 1. Reads `list.json` for files to fix
 2. Creates a git worktree per file (branched from `master`)
 3. Spawns concurrent worker processes (controlled by `LOOPER_CONCURRENCY`)
-4. Each worker: fixes lint → runs Jest/Vitest → fixes type errors → prunes suppressions → commits → pushes → opens PR
+4. Each worker: fixes lint → runs Jest/Vitest → fixes type errors → prunes suppressions → formats branch files → commits → pushes → opens PR
 5. Cleans up worktrees
 
 ### `--batch` — Sequential Batch Fixer
@@ -67,13 +70,44 @@ Processes all files in `list.json` sequentially on a single branch.
 node index.js --batch
 ```
 
-### `--auto-fix` / `--fix-tests` — Test Fixer
+### `--auto-fix` / `--fix-tests` — Full Fix Pipeline
 
-Interactive mode that fixes lint errors, then discovers and fixes failing tests.
+The primary pipeline mode. Merges master, installs dependencies, then iteratively fixes all lint, type, test, and E2E errors on the current branch.
 
 ```bash
-node index.js --auto-fix
+node index.js --auto-fix                # Full pipeline including E2E
+node index.js --auto-fix --skip-e2e     # Skip E2E tests (faster iteration)
 ```
+
+**Pipeline steps:**
+1. Merge master → yarn install
+2. Gather CI context from Buildkite & GitHub Actions
+3. Discover failing Jest & Vitest tests
+4. Filter out pre-existing failures (tests that fail on master too)
+5. Fix each failing test with AI agent
+6. Global ESLint check → fix lint errors
+7. TypeScript type check → fix type errors
+8. Prune eslint-suppressions → suppress remaining
+9. Format all branch files (prettier + eslint)
+10. Commit, push, open/update PR
+
+### `--e2e` — E2E Test Runner
+
+Runs Playwright E2E tests in Docker, auto-detects relevant test tags from branch changes, and attempts AI-driven fixes for failures.
+
+```bash
+node index.js --e2e                          # Auto-detect tags, Docker
+node index.js --e2e --e2e-tags=@checkout_local_smoke  # Specific tag
+node index.js --e2e --e2e-native             # Without Docker
+node index.js --e2e --e2e-headed             # Show browser
+node index.js --e2e --no-fix                 # Skip auto-fix on failure
+```
+
+**Features:**
+- Auto-resolves E2E tags from changed files (e.g., `PaymentMethod` → `@checkout_local_regression_payment_method`)
+- Docker mode with automatic AWS/ECR authentication
+- Pre-existing failure detection: skips failures that also fail on master
+- AI-powered E2E failure fixer with Playwright JSON result parsing
 
 ### `--check-prs` — PR Health Checker
 
@@ -89,9 +123,9 @@ node check-prs.js --label checkout # Filter by label
 
 **Features:**
 - Detects and auto-fixes "PR description too short" validation errors
-- Fetches Buildkite & GitHub Actions failure logs
-- **`--fix` runs the full pipeline per PR**: merge master → yarn install → Jest/Vitest → fix tests → global lint → fix lint → type check → fix types → prune suppressions → format branch files → commit → push
-- Reads PR review comments, triages actionable feedback, and applies fixes
+- Fetches Buildkite & GitHub Actions failure logs via API
+- **`--fix` runs the full pipeline per PR**: checks out the branch, writes CI context to `server-error-context.txt`, then spawns `node index.js --auto-fix --skip-e2e` — merge master → yarn install → Jest/Vitest → fix tests → global lint → fix lint → type check → fix types → prune suppressions → format branch files → commit → push
+- Reads PR review comments, triages actionable feedback, and applies AI-driven fixes
 
 ### Interactive Agent (default)
 
@@ -106,51 +140,121 @@ node index.js
 | File | Purpose |
 |---|---|
 | `index.js` | Main entry point — all fixer modes, AI agent, tool definitions |
-| `check-prs.js` | PR health checker — CI status, log fetching, comment-based fixes |
+| `check-prs.js` | PR health checker — CI status, log fetching, full pipeline fix |
 | `list.json` | Input: array of file paths (relative to repo root) to process |
-| `server-error-context.txt` | Optional: extra context injected into the AI fixer prompt |
+| `server-error-context.txt` | CI failure context injected into the AI fixer prompt (auto-populated) |
 | `i18n-static-keys-research-MEGA.md` | Research doc with per-file analysis for i18n key migrations |
 | `notes.md` | Style guide and coding principles for the fixer agent |
+| `docs/ARCHITECTURE.md` | System architecture and data flow documentation |
+| `CONTRIBUTING.md` | Contributing guidelines and development workflow |
 
 ## How the Fixer Agent Works
 
+### AI Fixer Loop
+
+Each fixer function (`fixLintErrorsForFile`, `fixTypeErrorsForFile`, `fixTestErrorsForFile`) runs an agentic loop:
+
 ```
-list.json → [file paths] → for each file:
-  1. Remove eslint-suppressions.json entry
-  2. Run ESLint → collect errors
-  3. AI agent reads file + errors + context
-  4. Agent uses tools (read_file, write_file, run_command) to fix
-  5. Re-lint in a loop (max 50 iterations) until clean
-  6. Run Jest/Vitest on related tests → fix failures
-  7. Run TypeScript type check → fix errors
-  8. Prune suppressions
-  9. Commit, push, open PR
+Error output → AI reads file + errors + context
+  → Agent uses tools (read_file, write_file, run_command) to fix
+  → Re-run validation → loop until clean (max 50 iterations)
 ```
 
-The AI agent has access to file I/O and shell commands within the repo. It follows a detailed system prompt with pattern-specific fix strategies for `@afterpay/i18n-only-static-keys` and other common ESLint rules.
+The AI agent has access to file I/O and shell commands within the repo. It follows a detailed system prompt with pattern-specific fix strategies.
+
+### Formatting Pipeline
+
+Every file write and commit goes through a multi-stage formatting pipeline:
+
+1. **`formatFile(path)`** — runs after every agent file write
+   - `prettier --write` to fix formatting
+   - `eslint --fix --prune-suppressions` to auto-fix + remove stale suppressions
+
+2. **`formatChangedFiles()`** — runs before every commit
+   - Collects all changed `.ts/.tsx/.js/.jsx` files
+   - `prettier --write` on all changed files
+   - `eslint --fix --prune-suppressions` to clean up
+   - `eslint --suppress-all` to add suppression entries for any remaining unfixed errors
+
+3. **`formatBranchFiles()`** — runs before push
+   - Diffs all files changed on the branch vs `origin/master`
+   - Processes in batches of 20 (avoids arg-too-long errors)
+   - `prettier --write` + `eslint --fix --prune-suppressions` per batch
+   - Auto-commits if any formatting issues found
+
+### ESLint Suppression Handling
+
+Instead of manually editing `eslint-suppressions.json`, looper uses ESLint's native flags:
+- `--prune-suppressions` — removes stale suppression entries for cleaned-up files
+- `--suppress-all` — adds suppression entries for any remaining unfixed errors
+
+This keeps `eslint-suppressions.json` in sync with actual errors, passing CI's "Verify suppressions" check.
+
+### CI Context Gathering
+
+Before fixing, looper gathers failure context from the branch's PR:
+
+1. **GitHub Actions** — fetches annotations + failed job logs via `gh api`
+2. **Buildkite** — fetches build state, failed job details, and full job logs via REST API (requires `BUILDKITE_TOKEN`)
+3. Context is stored in the `CI_CONTEXT` variable and injected into the AI fixer's system prompt
+4. For `check-prs.js --fix`, context is also written to `server-error-context.txt`
+
+### Pre-existing Failure Detection
+
+When discovering test failures, looper checks whether failures also occur on master:
+- Compares test file content between branch and master
+- If test files are identical to master, failures are flagged as "pre-existing"
+- Pre-existing failures are skipped instead of wasting AI tokens fixing unrelated issues
+- This filters both unit test and E2E test failures
+
+### E2E Tag Resolution
+
+Looper auto-detects which Playwright E2E test suites to run based on changed files:
+
+```
+Changed files → pattern matching → E2E tags
+  PaymentMethod.tsx     → @checkout_local_regression_payment_method
+  Login.tsx             → @checkout_local_regression_au_login
+  ConsumerLending.tsx   → @checkout_local_regression_cl_us
+  (no match)            → @checkout_local_smoke (fallback)
+```
+
+20+ patterns map source directories/components to specific E2E regression tags.
 
 ## Architecture
 
 ```
 looper/
-├── index.js          # Core engine
-│   ├── fixLintErrorsForFile()     # AI-powered lint fixer (agentic loop)
-│   ├── fixTypeErrorsForFile()     # AI-powered type error fixer
-│   ├── fixTestErrorsForFile()     # AI-powered test fixer
-│   ├── runParallelFixer()         # Worktree-based parallel orchestrator
-│   ├── runBatchFixer()            # Sequential batch orchestrator
-│   ├── runTestFixer()             # Test discovery + fix orchestrator
-│   ├── runWorkerMode()            # Single-file worker (used by parallel)
-│   └── runLoop()                  # Interactive chat agent
-├── check-prs.js      # PR health monitoring
-│   ├── listLooperPRs()            # Find open looper PRs via gh CLI
-│   ├── getPRChecks()              # Fetch CI check status
-│   ├── getFailedRunLogs()         # Fetch GitHub Actions failure logs
-│   ├── fixPRDescription()         # Auto-fix short PR descriptions
-│   ├── fixFailingPR()             # AI-powered CI failure fixer
-│   ├── fetchPRComments()          # Fetch review comments
-│   └── fixFromComments()          # AI triage + fix from review feedback
-└── list.json          # Input file list
+├── index.js              # Core engine (~4300 lines)
+│   ├── formatFile()                 # Prettier + eslint after every agent write
+│   ├── formatChangedFiles()         # Format + sync suppressions before commit
+│   ├── formatBranchFiles()          # Format all branch files vs master before push
+│   ├── gatherPRCIContext()          # Fetch CI logs from GitHub Actions + Buildkite
+│   ├── resolveE2ETagsFromChanges()  # Map changed files → Playwright test tags
+│   ├── runE2ETests()                # Run Playwright in Docker with auto-retry
+│   ├── fixLintErrorsForFile()       # AI-powered lint fixer (agentic loop)
+│   ├── fixTypeErrorsForFile()       # AI-powered type error fixer
+│   ├── fixTestErrorsForFile()       # AI-powered test fixer
+│   ├── fixE2EFailures()             # AI-powered E2E failure fixer
+│   ├── runParallelFixer()           # Worktree-based parallel orchestrator
+│   ├── runBatchFixer()              # Sequential batch orchestrator
+│   ├── runTestFixer()               # Full pipeline orchestrator (--auto-fix)
+│   ├── runE2ERunner()               # Standalone E2E runner (--e2e)
+│   ├── runWorkerMode()              # Single-file worker (used by --parallel)
+│   └── runLoop()                    # Interactive chat agent
+├── check-prs.js          # PR health monitoring (~1700 lines)
+│   ├── listLooperPRs()              # Find open looper PRs via gh CLI
+│   ├── getPRChecks()                # Fetch CI check status
+│   ├── getFailedRunLogs()           # Fetch GitHub Actions failure logs
+│   ├── getBuildkiteLogs()           # Fetch Buildkite failure logs via API
+│   ├── fixPRDescription()           # Auto-fix short PR descriptions
+│   ├── fixFailingPR()               # Spawn full index.js --auto-fix pipeline
+│   ├── fetchPRComments()            # Fetch review comments
+│   └── fixFromComments()            # AI triage + fix from review feedback
+├── list.json              # Input file list
+├── server-error-context.txt  # CI context (auto-populated, gitignored)
+└── docs/
+    └── ARCHITECTURE.md    # Detailed architecture documentation
 ```
 
 ## Support

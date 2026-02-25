@@ -5,9 +5,12 @@ Thanks for your interest in contributing! This document explains how to get set 
 ## Getting Started
 
 1. **Clone the repo** and run `npm install`
-2. **Copy `.env.example` to `.env`** and fill in your `OPENAI_API_KEY`
-3. **Set `LOOPER_REPO_ROOT`** to your local Rocketship checkout path
-4. **Ensure `gh` CLI is authenticated**: `gh auth status`
+2. **Copy `.env.example` to `.env`** and fill in:
+   - `OPENAI_API_KEY` — required for all modes
+   - `LOOPER_REPO_ROOT` — path to your local Rocketship checkout
+   - `BUILDKITE_TOKEN` — optional, enables fetching Buildkite CI build logs
+3. **Ensure `gh` CLI is authenticated**: `gh auth status`
+4. **For E2E testing**: Docker Desktop must be running, and AWS credentials configured via `saml2aws`
 
 ## Development Workflow
 
@@ -30,11 +33,17 @@ node -c index.js && node -c check-prs.js
 echo '["apps/checkout/src/page/example/Example.tsx"]' > list.json
 node index.js --batch
 
+# Full pipeline on current branch
+node index.js --auto-fix --skip-e2e
+
 # Check PR health (read-only by default)
 node check-prs.js
+
+# Run E2E tests against current branch
+node index.js --e2e
 ```
 
-**Tip**: Start with `--batch` mode (sequential, single branch) when testing changes to the fixer logic. Only use `--parallel` once you're confident the fix works.
+**Tip**: Start with `--batch` mode (sequential, single branch) when testing changes to the fixer logic. Use `--auto-fix --skip-e2e` for testing the full pipeline without waiting for E2E. Only use `--parallel` once you're confident the fix works.
 
 ### Code Style
 
@@ -54,27 +63,35 @@ node check-prs.js
 
 ### Medium Complexity
 
-- Add Buildkite API integration to `check-prs.js` for fetching build logs
 - Add retry logic for transient OpenAI API errors
 - Support configurable OpenAI model selection via env var
 - Add a `--report` flag that outputs JSON/CSV summaries
+- Improve E2E tag resolution with broader component coverage
 
 ### Advanced
 
-- Add support for other ESLint rules beyond `@afterpay/i18n-only-static-keys`
 - Implement a "confidence score" for AI fixes to gate auto-merging
 - Add metrics/telemetry for fix success rates
 - Build a web dashboard for PR health monitoring
+- Add support for auto-merging PRs when all checks pass
 
 ## Key Design Decisions
 
-1. **Single-file architecture**: `index.js` is intentionally one large file. This makes it easy to read top-to-bottom and understand the full flow. Don't split it into modules unless there's a strong reason.
+1. **Single-file architecture**: `index.js` is intentionally one large file (~4300 lines). This makes it easy to read top-to-bottom and understand the full flow. Don't split it into modules unless there's a strong reason.
 
 2. **AI is the fixer, not the orchestrator**: The orchestration logic (branch management, test running, PR creation) is deterministic Node.js code. The AI only handles the actual code fixing within a constrained tool loop.
 
-3. **Server-error-context.txt as context injection**: Extra context (CI logs, review comments) is passed to the fixer agent via this file. This avoids modifying the core fixer function signatures.
+3. **Three-layer formatting pipeline**: `formatFile()` runs after every agent write, `formatChangedFiles()` runs before every commit, and `formatBranchFiles()` runs before push. This catches formatting regressions at every stage.
 
-4. **Git worktrees for parallelism**: Instead of multiple clones, we use `git worktree` with symlinked `node_modules` for fast parallel processing.
+4. **ESLint native flags over manual JSON**: ESLint's `--prune-suppressions` and `--suppress-all` flags manage `eslint-suppressions.json` instead of manual JSON manipulation. More reliable and handles edge cases.
+
+5. **CI context injection**: Extra context (CI logs, review comments) is gathered via `gatherPRCIContext()` and passed to the fixer agent as a context variable. For `check-prs.js`, context is written to `server-error-context.txt`.
+
+6. **Git worktrees for parallelism**: Instead of multiple clones, we use `git worktree` with symlinked `node_modules` for fast parallel processing.
+
+7. **Pre-existing failure filtering**: Test failures that also occur on master are automatically skipped. This avoids wasting tokens fixing unrelated issues.
+
+8. **check-prs.js spawns the full pipeline**: Instead of reimplementing fix logic, `check-prs.js --fix` spawns `node index.js --auto-fix --skip-e2e` as a child process. One source of truth for the fix pipeline.
 
 ## Submitting PRs
 
