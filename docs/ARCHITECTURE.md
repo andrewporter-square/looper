@@ -98,9 +98,9 @@ Looper is an AI-powered automated code fixer that operates on TypeScript/React m
 **Auto-fix pipeline** (`runTestFixer()`) is the full CI-fix pipeline:
 1. Merge master → `safeYarnInstall()` (restores `package.json` if yarn modifies it)
 2. `gatherPRCIContext()` — fetch CI logs from Buildkite + GitHub Actions
-3. Discover failing Jest & Vitest tests
+3. Discover failing tests using configured runners (Jest, Vitest, or both — per `test.runners` config)
 4. Filter out pre-existing failures (tests that fail on master too)
-5. Fix each failing test with AI agent
+5. Fix each failing test with AI agent (injecting previous attempt history)
 6. Global ESLint check → `fixLintErrorsForFile()`
 7. TypeScript type check → `fixTypeErrorsForFile()`
 8. Prune ESLint suppressions → suppress remaining
@@ -117,14 +117,18 @@ The fixer agent is an OpenAI function-calling loop with three tools:
 | `read_file` | Read a file from the repo (with line range) |
 | `write_file` | Write content to a file, then auto-format via `formatFile()` |
 | `run_command` | Execute a shell command in the repo root (Hermit env) |
+| `search_files` | Search for text/regex patterns across repo files |
+| `list_files` | List directory contents |
 
 **Agent loop:**
 ```
 1. Collect error output (eslint/tsc/jest/vitest/playwright)
-2. Send to OpenAI with system prompt + file content + context
-3. Agent calls tools to investigate and fix
-4. Re-run validation
-5. Loop until clean or max iterations (50) reached
+2. Load previous attempt history for this branch+file (fix-history.js)
+3. Send to OpenAI with system prompt + file content + context + history
+4. Agent calls tools to investigate and fix
+5. Re-run validation
+6. Record attempt result (approach, errors, success/failure)
+7. Loop until clean or max iterations (50–90) reached
 ```
 
 **Key design choice**: The agent has full read/write access to the repo via tools, but the orchestrator controls the git workflow. The agent never commits or pushes.
@@ -132,10 +136,46 @@ The fixer agent is an OpenAI function-calling loop with three tools:
 Four specializations:
 - **`fixLintErrorsForFile()`** — ESLint errors. System prompt includes pattern-specific strategies for custom i18n rules (configurable), `no-unused-vars`, import rules, etc.
 - **`fixTypeErrorsForFile()`** — TypeScript `tsc` errors. Traces type dependencies across files.
-- **`fixTestErrorsForFile()`** — Jest and Vitest failures. Reads test file + source file, understands assertion patterns.
+- **`fixTestErrorsForFile()`** — Jest and Vitest failures. Reads test file + source file, understands assertion patterns. Default runner is the first entry in `test.runners` config.
 - **`fixE2EFailures()`** — Playwright E2E failures. Parses structured JSON results, correlates with source changes.
 
-### 3. Formatting Pipeline
+### 3. Fix History (`fix-history.js`)
+
+Persistent cross-run tracking of fix attempts, stored in `.looper-history.json`:
+
+**`recordAttempt({ branch, file, fixType, approach, errors, success, filesChanged })`**
+- Called at every fixer function success and failure exit point
+- Captures what the agent wrote, what errors occurred, and whether the fix succeeded
+- `summarizeAgentApproach(messages)` extracts files read/written and the agent's stated strategy from conversation messages
+
+**`getHistoryForPrompt(branch, file)`**
+- Formats previous failed attempts into text injected into the AI system prompt
+- Includes explicit instructions: "These approaches already failed — try something different"
+- Returns empty string when no prior failures exist
+
+**`getBranchSummary(branch)`**
+- Returns `{ totalAttempts, failedAttempts, files }` — used by `check-prs.js` to skip branches with too many failures
+
+**`clearBranchHistory(branch)`** / **`pruneHistory()`**
+- Clear on successful full fix; auto-expire entries > 7 days; cap at 20 per branch/file
+
+### 4. Configurable Test Runners
+
+Test runner selection is controlled by `looper.config.js`:
+
+```js
+test: {
+  runners: ['vitest'],            // Which runners are active
+  vitestCommand: 'yarn test:vitest --run',
+  jestCommand: '',                // Empty = skip jest
+}
+```
+
+- **Discovery**: Jest and Vitest discovery blocks are wrapped in `if (TEST_RUNNERS.includes('jest'))` / `if (TEST_RUNNERS.includes('vitest'))` guards
+- **Per-file commands**: `JEST_CMD` and `VITEST_CMD` constants configurable via config (looper appends `--reporter`, `--outputFile`, file patterns, etc.)
+- **Default runner**: `fixTestErrorsForFile()` defaults to the first entry in `test.runners`
+
+### 5. Formatting Pipeline
 
 Three layers of formatting prevent regressions in agent-generated code:
 
@@ -161,7 +201,7 @@ eslint <file> --fix --prune-suppressions
 4. If changes detected: eslint --suppress-all + auto-commit
 ```
 
-### 4. ESLint Suppression Handling
+### 6. ESLint Suppression Handling
 
 Instead of manually editing `eslint-suppressions.json`, looper uses ESLint's native flags:
 
@@ -172,7 +212,7 @@ Instead of manually editing `eslint-suppressions.json`, looper uses ESLint's nat
 
 This keeps `eslint-suppressions.json` in sync with actual errors, passing CI's "Verify suppressions" check.
 
-### 5. CI Context Gathering
+### 7. CI Context Gathering
 
 `gatherPRCIContext()` fetches failure information from the branch's PR:
 
@@ -183,7 +223,7 @@ This keeps `eslint-suppressions.json` in sync with actual errors, passing CI's "
 5. **Error extraction** — `extractErrorSections()` scans logs for error patterns (stack traces, assertion failures, compile errors) and returns the most relevant excerpts (capped at 12KB per job)
 6. **Output** — combined context string (capped at 40KB total), stored in `CI_CONTEXT` and injected into the AI system prompt
 
-### 6. Pre-existing Failure Detection
+### 8. Pre-existing Failure Detection
 
 When discovering test failures, looper determines which are caused by the branch vs. pre-existing on master:
 
@@ -198,7 +238,7 @@ When discovering test failures, looper determines which are caused by the branch
 
 This avoids wasting AI tokens on unrelated failures.
 
-### 7. E2E Testing
+### 9. E2E Testing
 
 `runE2ETests()` runs Playwright E2E tests with smart tag resolution:
 
@@ -213,7 +253,7 @@ This avoids wasting AI tokens on unrelated failures.
 - Runs via `yarn test:e2e:$APP --tags $TAGS`
 - Parses Playwright JSON results for structured failure data
 
-### 8. PR Health Checker (`check-prs.js`)
+### 10. PR Health Checker (`check-prs.js`)
 
 **Scanning pipeline:**
 ```
@@ -228,13 +268,15 @@ List open PRs (gh pr list --author @me)
 **Fix pipeline (`--fix`):**
 ```
 For each failing PR:
+  0. Check fix-history — skip if 5+ consecutive failures
   1. Check out the PR branch
   2. Write CI failure context to server-error-context.txt
   3. Spawn: node index.js --auto-fix --skip-e2e
      (full pipeline: merge master → install → fix tests →
       fix lint → fix types → format → commit → push)
-  4. Stream child process output in real-time
-  5. Report timing and result
+  4. Record attempt result to fix-history
+  5. Stream child process output in real-time
+  6. Report timing and result
 ```
 
 **Comment fix pipeline (`--fix-comments`):**
@@ -264,9 +306,10 @@ The AI agent receives context from multiple sources:
 1. **System prompt**: Fix strategies, patterns, style guide (hardcoded in `index.js`)
 2. **File content**: The actual source file being fixed
 3. **Error output**: ESLint/tsc/Jest/Vitest/Playwright output
-4. **Research doc**: Matched sections from `i18n-static-keys-research-MEGA.md`
-5. **CI context**: `CI_CONTEXT` variable (gathered from Buildkite + GitHub Actions)
-6. **Server context**: `server-error-context.txt` (CI logs written by check-prs.js)
+4. **Fix history**: Previous failed attempts for this branch+file (`fix-history.js`)
+5. **Research doc**: Matched sections from `i18n-static-keys-research-MEGA.md` (if applicable)
+6. **CI context**: `CI_CONTEXT` variable (gathered from Buildkite + GitHub Actions)
+7. **Server context**: `server-error-context.txt` (CI logs written by check-prs.js)
 
 ## Security Considerations
 

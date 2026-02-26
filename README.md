@@ -92,9 +92,9 @@ node index.js --auto-fix --skip-e2e     # Skip E2E tests (faster iteration)
 **Pipeline steps:**
 1. Merge master → yarn install
 2. Gather CI context from Buildkite & GitHub Actions
-3. Discover failing Jest & Vitest tests
+3. Discover failing tests using configured runners (Jest, Vitest, or both)
 4. Filter out pre-existing failures (tests that fail on master too)
-5. Fix each failing test with AI agent
+5. Fix each failing test with AI agent (with cross-run history tracking)
 6. Global ESLint check → fix lint errors
 7. TypeScript type check → fix type errors
 8. Prune eslint-suppressions → suppress remaining
@@ -134,7 +134,8 @@ node check-prs.js --label myapp # Filter by label
 **Features:**
 - Detects and auto-fixes "PR description too short" validation errors
 - Fetches Buildkite & GitHub Actions failure logs via API
-- **`--fix` runs the full pipeline per PR**: checks out the branch, writes CI context to `server-error-context.txt`, then spawns `node index.js --auto-fix --skip-e2e` — merge master → yarn install → Jest/Vitest → fix tests → global lint → fix lint → type check → fix types → prune suppressions → format branch files → commit → push
+- **`--fix` runs the full pipeline per PR**: checks out the branch, writes CI context to `server-error-context.txt`, then spawns `node index.js --auto-fix --skip-e2e` — merge master → yarn install → discover failing tests → fix tests → global lint → fix lint → type check → fix types → prune suppressions → format branch files → commit → push
+- Tracks fix attempts per branch — skips branches with 5+ consecutive failures (see [Fix History](#fix-history))
 - Reads PR review comments, triages actionable feedback, and applies AI-driven fixes
 
 ### Interactive Agent (default)
@@ -151,9 +152,12 @@ node index.js
 |---|---|
 | `index.js` | Main entry point — all fixer modes, AI agent, tool definitions |
 | `check-prs.js` | PR health checker — CI status, log fetching, full pipeline fix |
+| `fix-history.js` | Persistent fix-attempt tracking across runs (see [Fix History](#fix-history)) |
+| `looper.config.js` | Repo-specific configuration (gitignored — copy from example) |
+| `looper.config.example.js` | Example config with all available options |
 | `list.json` | Input: array of file paths (relative to repo root) to process |
+| `.looper-history.json` | Fix attempt history (auto-generated, gitignored) |
 | `server-error-context.txt` | CI failure context injected into the AI fixer prompt (auto-populated) |
-| `i18n-static-keys-research-MEGA.md` | Research doc with per-file analysis for i18n key migrations |
 | `notes.md` | Style guide and coding principles for the fixer agent |
 | `docs/ARCHITECTURE.md` | System architecture and data flow documentation |
 | `CONTRIBUTING.md` | Contributing guidelines and development workflow |
@@ -162,15 +166,30 @@ node index.js
 
 ### AI Fixer Loop
 
-Each fixer function (`fixLintErrorsForFile`, `fixTypeErrorsForFile`, `fixTestErrorsForFile`) runs an agentic loop:
+Each fixer function (`fixLintErrorsForFile`, `fixTypeErrorsForFile`, `fixTestErrorsForFile`, `fixE2EFailures`) runs an agentic loop:
 
 ```
-Error output → AI reads file + errors + context
-  → Agent uses tools (read_file, write_file, run_command) to fix
-  → Re-run validation → loop until clean (max 50 iterations)
+Error output → AI reads file + errors + context + fix history
+  → Agent uses tools (read_file, write_file, run_command, search_files, list_files) to fix
+  → Re-run validation → loop until clean (max 50–90 iterations)
 ```
 
-The AI agent has access to file I/O and shell commands within the repo. It follows a detailed system prompt with pattern-specific fix strategies.
+The AI agent has access to file I/O, search, and shell commands within the repo. It follows a detailed system prompt with pattern-specific fix strategies and previous attempt history.
+
+### Fix History
+
+Looper tracks what was tried across runs via `fix-history.js`, persisting to `.looper-history.json`:
+
+- **Cross-run memory**: Each fix attempt records the branch, file, fix type, approach taken, errors encountered, and success/failure
+- **Prompt injection**: Previous failed approaches are injected into the AI system prompt with explicit instructions not to repeat them
+- **Approach extraction**: `summarizeAgentApproach()` captures which files the agent read/wrote and its stated strategy
+- **Attempt limits**: `check-prs.js` skips branches with 5+ consecutive failed attempts
+- **Auto-pruning**: Entries older than 7 days are expired; max 20 entries per branch/file
+
+Clear history for a specific branch:
+```bash
+node -e "require('./fix-history').clearBranchHistory('feat/my-branch')"
+```
 
 ### Formatting Pipeline
 
@@ -217,6 +236,22 @@ When discovering test failures, looper checks whether failures also occur on mas
 - Pre-existing failures are skipped instead of wasting AI tokens fixing unrelated issues
 - This filters both unit test and E2E test failures
 
+### Configurable Test Runners
+
+Looper supports both Jest and Vitest, configured in `looper.config.js`:
+
+```js
+test: {
+  runners: ['vitest'],            // Active runners: ['vitest'], ['jest'], or ['jest', 'vitest']
+  vitestCommand: 'yarn test:vitest --run',  // Base vitest command
+  jestCommand: '',                // Base jest command (empty = skip jest)
+},
+```
+
+- **Discovery**: Only enabled runners participate in test discovery
+- **Per-file fixing**: The default runner for `fixTestErrorsForFile()` is the first configured runner
+- **Commands**: Looper appends per-file arguments (`--reporter`, `--outputFile`, file patterns, etc.)
+
 ### E2E Tag Resolution
 
 Looper auto-detects which Playwright E2E test suites to run based on changed files:
@@ -261,6 +296,14 @@ looper/
 │   ├── fixFailingPR()               # Spawn full index.js --auto-fix pipeline
 │   ├── fetchPRComments()            # Fetch review comments
 │   └── fixFromComments()            # AI triage + fix from review feedback
+├── fix-history.js         # Persistent fix-attempt tracking
+│   ├── recordAttempt()              # Save attempt details to history
+│   ├── getHistoryForPrompt()        # Format failed attempts for AI prompt
+│   ├── getBranchSummary()           # Aggregate stats per branch
+│   ├── clearBranchHistory()         # Clear history after successful fix
+│   └── pruneHistory()               # Expire old entries (7 day / 20 cap)
+├── looper.config.js       # Repo-specific config (gitignored)
+├── looper.config.example.js  # Config template with all options
 ├── list.json              # Input file list
 ├── server-error-context.txt  # CI context (auto-populated, gitignored)
 └── docs/

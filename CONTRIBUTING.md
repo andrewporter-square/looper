@@ -27,7 +27,7 @@ Looper doesn't have a formal test suite yet — validation is done by running th
 
 ```bash
 # Syntax check
-node -c index.js && node -c check-prs.js
+node -c index.js && node -c check-prs.js && node -c fix-history.js
 
 # Dry run: put a single file in list.json and run batch mode
 echo '["apps/myapp/src/page/example/Example.tsx"]' > list.json
@@ -77,7 +77,7 @@ node index.js --e2e
 
 ## Key Design Decisions
 
-1. **Single-file architecture**: `index.js` is intentionally one large file (~4300 lines). This makes it easy to read top-to-bottom and understand the full flow. Don't split it into modules unless there's a strong reason.
+1. **Single-file architecture**: `index.js` is intentionally one large file (~4300 lines). This makes it easy to read top-to-bottom and understand the full flow. Don't split it into modules unless there's a strong reason. (`fix-history.js` is a notable exception — it was extracted for clean separation of cross-run persistence logic.)
 
 2. **AI is the fixer, not the orchestrator**: The orchestration logic (branch management, test running, PR creation) is deterministic Node.js code. The AI only handles the actual code fixing within a constrained tool loop.
 
@@ -92,6 +92,10 @@ node index.js --e2e
 7. **Pre-existing failure filtering**: Test failures that also occur on master are automatically skipped. This avoids wasting tokens fixing unrelated issues.
 
 8. **check-prs.js spawns the full pipeline**: Instead of reimplementing fix logic, `check-prs.js --fix` spawns `node index.js --auto-fix --skip-e2e` as a child process. One source of truth for the fix pipeline.
+
+9. **Cross-run fix history**: `fix-history.js` persists what was tried and why it failed to `.looper-history.json`. This prevents the AI from repeating the same failed approach across invocations, and lets `check-prs.js` skip branches that have been attempted too many times.
+
+10. **Configurable test runners**: Test runner selection (`test.runners`, `test.jestCommand`, `test.vitestCommand`) lives in `looper.config.js`. Discovery and per-file fixing are conditionally guarded so disabled runners are skipped entirely.
 
 ## Submitting PRs
 
