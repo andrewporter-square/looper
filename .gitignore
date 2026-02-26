@@ -3,6 +3,7 @@ node_modules/
 looper.config.js
 .pr-*-logs.txt
 .pr-body-*.md
+.looper-history.json
 
 # Company-specific data/log files (not for public repo)
 *.log

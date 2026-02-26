@@ -6,6 +6,7 @@ const readline = require('readline');
 const OpenAI = require('openai');
 const chalk = require('chalk');
 const config = require('./looper.config');
+const { recordAttempt, getHistoryForPrompt, clearBranchHistory } = require('./fix-history');
 
 const client = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -31,6 +32,40 @@ const REPO_ENV = {
   PATH: `${REPO_ROOT}/node_modules/.bin:${REPO_ROOT}/bin:${process.env.PATH}`,
   ...(config.env.hermit ? { HERMIT_BIN: `${REPO_ROOT}/bin`, HERMIT_ENV: REPO_ROOT } : {}),
 };
+
+async function getCurrentBranch() {
+  const result = await runCommand('git branch --show-current', REPO_ROOT);
+  return result.success ? result.stdout.trim() : 'unknown';
+}
+
+function summarizeAgentApproach(messages) {
+  const writes = [];
+  const reads = [];
+  let strategyCapture = '';
+  for (const msg of messages) {
+    if (msg.role === 'assistant' && msg.tool_calls) {
+      for (const tc of msg.tool_calls) {
+        if (tc.function.name === 'write_file') {
+          try {
+            const args = JSON.parse(tc.function.arguments);
+            writes.push(args.path ? path.basename(args.path) : 'unknown');
+          } catch (_) { writes.push('unknown'); }
+        } else if (tc.function.name === 'read_file') {
+          try {
+            const args = JSON.parse(tc.function.arguments);
+            reads.push(args.path ? path.basename(args.path) : 'unknown');
+          } catch (_) {}
+        }
+      }
+    }
+    if (msg.role === 'assistant' && msg.content && typeof msg.content === 'string') {
+      if (msg.content.length > 50 && !strategyCapture) {
+        strategyCapture = msg.content.slice(0, 500);
+      }
+    }
+  }
+  return `Wrote: ${writes.join(', ') || 'none'}. Read: ${[...new Set(reads)].slice(0, 10).join(', ') || 'none'}. ${strategyCapture ? 'Strategy: ' + strategyCapture.slice(0, 300) : ''}`;
+}
 
 // --- BATCH FIXER LOGIC ---
 
@@ -982,8 +1017,12 @@ TOOLS AVAILABLE:
 - search_files: Search for text/regex patterns across files.
 - run_command: Run shell commands (git, grep, etc).`;
 
+  const currentBranch = await getCurrentBranch();
+  const fixHistory = getHistoryForPrompt(currentBranch, '_e2e');
+  let lastErrors = '';
+
   let messages = [
-    { role: 'system', content: systemPrompt },
+    { role: 'system', content: systemPrompt + fixHistory },
     {
       role: 'user',
       content: [
@@ -1086,6 +1125,7 @@ TOOLS AVAILABLE:
                   }
 
                   console.log(chalk.red(`  ❌ E2E tests still failing (${newFailures.length} failure(s)).`));
+                  lastErrors = failSummary.slice(0, 2000);
                 }
               } catch (err) {
                 result = `Error writing file: ${err.message}`;
@@ -1131,6 +1171,7 @@ TOOLS AVAILABLE:
 
   if (isFixed) {
     fixedCount = failedTests.length;
+    recordAttempt({ branch: currentBranch, file: '_e2e', fixType: 'e2e', approach: summarizeAgentApproach(messages), errors: '', success: true });
     console.log(chalk.green(`  ✅ E2E failures fixed! Committing...`));
     await formatChangedFiles();
     await runCommand(`git add .`, REPO_ROOT);
@@ -1152,6 +1193,7 @@ TOOLS AVAILABLE:
     }
   } else {
     console.log(chalk.bold.red(`  ⚠️ Could not fix E2E failures after ${attempt} attempt(s).`));
+    recordAttempt({ branch: currentBranch, file: '_e2e', fixType: 'e2e', approach: summarizeAgentApproach(messages), errors: lastErrors || 'Could not fix E2E failures after ' + attempt + ' attempts', success: false });
     // Revert uncommitted changes from failed fix attempts
     console.log(chalk.blue(`  Discarding uncommitted changes from fix attempts...`));
     await runCommand(`git checkout HEAD -- .`, REPO_ROOT);
@@ -1597,6 +1639,9 @@ async function fixLintErrorsForFile(relativePath) {
   }
 
   // Agent System Prompt
+  const currentBranch = await getCurrentBranch();
+  const fixHistory = getHistoryForPrompt(currentBranch, relativePath);
+  let lastErrors = '';
   let messages = [
     {
       role: "system",
@@ -1732,7 +1777,7 @@ TOOLS AVAILABLE:
 - list_files: List directory contents
 - search_files: Search for a text/regex pattern across files — use this to find type definitions, enum values, translation keys, or imports
 - run_command: Run shell commands (runs in repo root with correct env)
-`
+${fixHistory}`
     },
     {
       role: "user",
@@ -1852,6 +1897,7 @@ TOOLS AVAILABLE:
                              console.log(chalk.bold.green("  ✅ Target Lint Passed!"));
                          } else {
                              result = `FAILURE: Lint failed after fix.\nNew Errors:\n${lintResult.stdout + lintResult.stderr}`;
+                             lastErrors = (lintResult.stdout + lintResult.stderr).slice(0, 2000);
                              console.log(chalk.red("  ❌ Fix Failed. Sending errors back to agent..."));
                          }
                     } catch (err) {
@@ -1900,6 +1946,7 @@ TOOLS AVAILABLE:
 
   if (isFixed) {
     // 7. Commit (and Push if not in batch mode)
+    recordAttempt({ branch: currentBranch, file: relativePath, fixType: 'lint', approach: summarizeAgentApproach(messages), errors: '', success: true });
     console.log(chalk.green(`  Committing...`));
     await formatChangedFiles();
     
@@ -1925,6 +1972,7 @@ TOOLS AVAILABLE:
     console.log(chalk.green(`  Done with ${relativePath}`));
   } else {
     console.log(chalk.bold.red(`  ⚠️ Failed to fix ${relativePath} after ${MAX_STEPS} steps.`));
+    recordAttempt({ branch: currentBranch, file: relativePath, fixType: 'lint', approach: summarizeAgentApproach(messages), errors: lastErrors || 'Max steps reached', success: false });
     console.log(chalk.blue(`  Discarding changes...`));
     await runCommand(`git checkout HEAD "${relativePath}"`, REPO_ROOT); 
   }
@@ -1976,6 +2024,10 @@ async function fixTypeErrorsForFile(relativePath, typeErrors) {
   // Find related type definition files mentioned in errors
   const typeHints = typeErrors.match(/type '([^']+)'/gi) || [];
 
+  const currentBranch = await getCurrentBranch();
+  const fixHistory = getHistoryForPrompt(currentBranch, relativePath);
+  let lastErrors = '';
+
   let messages = [
     {
       role: "system",
@@ -2020,7 +2072,7 @@ TOOLS AVAILABLE:
 - list_files: List directory contents
 - search_files: Search for a text/regex pattern across files — find type definitions, imports, enum values
 - run_command: Run shell commands in repo root (e.g., git log, grep)
-`
+${fixHistory}`
     },
     {
       role: "user",
@@ -2103,6 +2155,7 @@ TOOLS AVAILABLE:
                              console.log(chalk.bold.green("  ✅ TypeScript errors fixed!"));
                          } else {
                              result = `FAILURE: TypeScript errors remain.\nRemaining Errors:\n${tscOutput}`;
+                             lastErrors = tscOutput.slice(0, 2000);
                              console.log(chalk.red("  ❌ Fix incomplete. Sending remaining errors back..."));
                          }
                     } catch (err) {
@@ -2149,6 +2202,7 @@ TOOLS AVAILABLE:
   }
 
   if (isFixed) {
+    recordAttempt({ branch: currentBranch, file: relativePath, fixType: 'type', approach: summarizeAgentApproach(messages), errors: '', success: true });
     console.log(chalk.green(`  Committing TypeScript fix...`));
     await formatChangedFiles();
     const tCommitParts = relativePath.split('/');
@@ -2171,6 +2225,7 @@ TOOLS AVAILABLE:
     console.log(chalk.green(`  Done with ${relativePath}`));
   } else {
     console.log(chalk.bold.red(`  ⚠️ Failed to fix TypeScript errors in ${relativePath} after ${MAX_STEPS} steps.`));
+    recordAttempt({ branch: currentBranch, file: relativePath, fixType: 'type', approach: summarizeAgentApproach(messages), errors: lastErrors || 'Max steps reached', success: false });
     console.log(chalk.blue(`  Discarding changes...`));
     await runCommand(`git checkout HEAD "${relativePath}"`, REPO_ROOT); 
   }
@@ -2396,6 +2451,9 @@ async function fixTestErrorsForFile(relativePath, runner = 'jest') {
   ].filter(Boolean).join('\n');
 
   // Agent System Prompt
+  const currentBranch = await getCurrentBranch();
+  const fixHistory = getHistoryForPrompt(currentBranch, relativePath);
+  let lastErrors = '';
   let messages = [
     {
       role: "system",
@@ -2448,7 +2506,7 @@ TOOLS AVAILABLE:
 - list_files: List directory contents
 - search_files: Search for a text/regex pattern across files — find related implementations, type definitions, usages
 - run_command: Run shell commands in repo root (git log, grep, find, etc.)
-`
+${fixHistory}`
     },
     {
       role: "user",
@@ -2536,6 +2594,7 @@ TOOLS AVAILABLE:
                          } else {
                              const errors = cleanTestOutput(testResult.stdout + testResult.stderr);
                              result = `FAILURE: Tests still failed after fix.\nOutput:\n${errors.slice(0, 15000)}`;
+                             lastErrors = errors.slice(0, 2000);
                              console.log(chalk.red("  ❌ Verify Failed."));
                          }
                     } catch (err) {
@@ -2582,6 +2641,7 @@ TOOLS AVAILABLE:
   }
 
   if (isFixed) {
+    recordAttempt({ branch: currentBranch, file: relativePath, fixType: 'test', approach: summarizeAgentApproach(messages), errors: '', success: true });
     console.log(chalk.green(`  Committing...`));
     await formatChangedFiles();
     
@@ -2614,6 +2674,7 @@ TOOLS AVAILABLE:
     console.log(chalk.green(`  Done with ${relativePath}`));
   } else {
     console.log(chalk.bold.red(`  ⚠️ Failed to fix tests for ${relativePath} after ${MAX_STEPS} steps.`));
+    recordAttempt({ branch: currentBranch, file: relativePath, fixType: 'test', approach: summarizeAgentApproach(messages), errors: lastErrors || 'Max steps reached', success: false });
     console.log(chalk.blue(`  Discarding ALL uncommitted changes...`));
     // Revert all uncommitted changes — the agent may have modified source files, not just the test
     await runCommand(`git checkout HEAD -- .`, REPO_ROOT);

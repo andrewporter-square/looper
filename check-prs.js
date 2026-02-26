@@ -18,6 +18,7 @@
 require('dotenv').config();
 const { exec, execSync } = require('child_process');
 const path = require('path');
+const { getBranchSummary, recordAttempt } = require('./fix-history');
 const fs = require('fs');
 const chalk = require('chalk');
 const OpenAI = require('openai');
@@ -1038,6 +1039,15 @@ async function fixFailingPR(pr, failedChecks, failureLogs) {
 
   const branch = pr.headRefName;
 
+  // 0. Check fix-attempt history — skip if too many failures
+  const historySummary = getBranchSummary(branch);
+  if (historySummary.failedAttempts >= 5) {
+    console.log(chalk.yellow(`  ⚠️  Skipping — ${historySummary.failedAttempts} failed fix attempts already recorded for branch ${branch}.`));
+    console.log(chalk.yellow(`     Files attempted: ${Object.keys(historySummary.files).join(', ') || 'n/a'}`));
+    console.log(chalk.dim(`     Clear history with: node -e "require('./fix-history').clearBranchHistory('${branch}')" `));
+    return false;
+  }
+
   // 1. Check out the PR branch
   await runCommand(`git fetch origin ${branch}`, REPO_ROOT);
   await runCommand(`git checkout ${branch}`, REPO_ROOT);
@@ -1128,6 +1138,7 @@ async function fixFailingPR(pr, failedChecks, failureLogs) {
     if (pushMatch) {
       console.log(chalk.green(`  🚀 Changes pushed to ${branch}. CI should re-run.`));
     }
+    recordAttempt({ branch, file: '_pipeline', fixType: 'pipeline', approach: 'Full fix pipeline via check-prs.js', errors: '', success: true });
     return true;
   } else {
     console.log(chalk.red(`  ❌ Fix pipeline exited with code ${result.code} after ${elapsed}s`));
@@ -1140,6 +1151,7 @@ async function fixFailingPR(pr, failedChecks, failureLogs) {
       console.log(chalk.dim(lastLines.replace(/^/gm, '    ')));
     }
 
+    recordAttempt({ branch, file: '_pipeline', fixType: 'pipeline', approach: `Full fix pipeline via check-prs.js (exit code ${result.code})`, errors: (lastLines || '').slice(0, 2000), success: false });
     return false;
   }
 }
