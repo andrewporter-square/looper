@@ -33,6 +33,16 @@ module.exports = {
     model: 'gpt-4o',
   },
 
+  // ─── Test Runners ───────────────────────────────────────────────────────────
+  test: {
+    // Which test runners are active: ['vitest'], ['jest'], or ['jest', 'vitest']
+    runners: ['jest', 'vitest'],
+    // Base vitest command (looper appends per-file args)
+    vitestCommand: 'yarn run test:vitest --run',
+    // Base jest command (looper appends per-file args). Leave empty if not used.
+    jestCommand: 'npx jest',
+  },
+
   // ─── Test Timezone ──────────────────────────────────────────────────────────
   // Timezone used for Jest test commands (TZ="...")
   // Set to your project's canonical timezone, or '' to use system default.

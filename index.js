@@ -25,6 +25,9 @@ const TZ = config.timezone;
 const DEFAULT_APP = config.defaultApp;
 const PR_CHECKLIST = config.pr.checklist;
 const SKIP_PATH_PATTERNS = config.skipPathPatterns;
+const TEST_RUNNERS = config.test?.runners || ['jest', 'vitest'];
+const JEST_CMD = config.test?.jestCommand || `TZ="${TZ}" npx jest`;
+const VITEST_CMD = config.test?.vitestCommand || `yarn run test:vitest --run`;
 
 // Hermit env: prepend repo bin paths so exec() uses the right Node/yarn/vitest
 const REPO_ENV = {
@@ -2232,7 +2235,7 @@ ${fixHistory}`
 }
 
 
-async function fixTestErrorsForFile(relativePath, runner = 'jest') {
+async function fixTestErrorsForFile(relativePath, runner = TEST_RUNNERS[0] || 'vitest') {
   const fullPath = path.join(REPO_ROOT, relativePath);
 
   // Load server error context if available
@@ -2254,13 +2257,13 @@ async function fixTestErrorsForFile(relativePath, runner = 'jest') {
   // Using TZ from config as per package.json patterns
   let testCommand = '';
   if (runner === 'vitest') {
-      testCommand = `yarn run test:vitest --run "${relativePath}"`;
+      testCommand = `${VITEST_CMD} "${relativePath}"`;
   } else {
       // Use --testPathPattern instead of --findRelatedTests to avoid
       // jest-haste-map scanning the full dependency graph and hitting
       // duplicate mock errors in monorepo workspaces
       const escapedPath = relativePath.replace(/[.*+?^${}()|[\]\\]/g, '\\\\$&');
-      testCommand = `TZ="${TZ}" npx jest --testPathPattern="${escapedPath}" --passWithNoTests --no-cache`;
+      testCommand = `${JEST_CMD} "${escapedPath}" --passWithNoTests --no-cache`;
   }
 
   console.log(chalk.yellow(`  Running tests: ${testCommand}`));
@@ -2341,9 +2344,9 @@ async function fixTestErrorsForFile(relativePath, runner = 'jest') {
       
       let updateCommand = '';
       if (runner === 'vitest') {
-          updateCommand = `yarn run test:vitest --run "${relativePath}" --update`;
+          updateCommand = `${VITEST_CMD} "${relativePath}" --update`;
       } else {
-          updateCommand = `TZ="${TZ}" npx jest --findRelatedTests "${relativePath}" --passWithNoTests --updateSnapshot`;
+          updateCommand = `${JEST_CMD} --findRelatedTests "${relativePath}" --passWithNoTests --updateSnapshot`;
       }
       
       const updateResult = await runCommand(updateCommand, REPO_ROOT);
@@ -2758,51 +2761,67 @@ async function runTestFixer() {
      const failingTasks = []; // Array of { filePath, runner }
 
      // 1. Jest Discovery
-     const jestOutputFile = 'jest-results.json';
-     const jestOutputPath = path.join(REPO_ROOT, jestOutputFile);
-     if (fs.existsSync(jestOutputPath)) fs.unlinkSync(jestOutputPath);
+     if (TEST_RUNNERS.includes('jest') && JEST_CMD) {
+         const jestOutputFile = 'jest-results.json';
+         const jestOutputPath = path.join(REPO_ROOT, jestOutputFile);
+         if (fs.existsSync(jestOutputPath)) fs.unlinkSync(jestOutputPath);
 
-     console.log(chalk.yellow(`  Running Jest suite...`));
-     const jestCmd = `TZ="${TZ}" npx jest --maxWorkers=4 --json --outputFile="${jestOutputFile}"`;
-     await runCommand(jestCmd, REPO_ROOT);
+         console.log(chalk.yellow(`  Running Jest suite...`));
+         const jestCmd = `${JEST_CMD} --maxWorkers=4 --json --outputFile="${jestOutputFile}"`;
+         await runCommand(jestCmd, REPO_ROOT);
 
-     if (fs.existsSync(jestOutputPath)) {
-         try {
-             const testData = JSON.parse(fs.readFileSync(jestOutputPath, 'utf8'));
-             const failed = testData.testResults.filter(t => t.status === 'failed');
-             failed.forEach(t => {
-                 const p = t.name.startsWith(REPO_ROOT) ? t.name.slice(REPO_ROOT.length + 1) : t.name;
-                 failingTasks.push({ filePath: p, runner: 'jest' });
-             });
-         } catch (e) {
-             console.error(chalk.red("  Failed to parse Jest results."));
+         if (fs.existsSync(jestOutputPath)) {
+             try {
+                 const testData = JSON.parse(fs.readFileSync(jestOutputPath, 'utf8'));
+                 const failed = testData.testResults.filter(t => t.status === 'failed');
+                 failed.forEach(t => {
+                     const p = t.name.startsWith(REPO_ROOT) ? t.name.slice(REPO_ROOT.length + 1) : t.name;
+                     failingTasks.push({ filePath: p, runner: 'jest' });
+                 });
+             } catch (e) {
+                 console.error(chalk.red("  Failed to parse Jest results."));
+             }
          }
      }
 
      // 2. Vitest Discovery
-     const vitestOutputFile = 'vitest-results.json';
-     const vitestOutputPath = path.join(REPO_ROOT, vitestOutputFile);
-     if (fs.existsSync(vitestOutputPath)) fs.unlinkSync(vitestOutputPath);
-
-     console.log(chalk.yellow(`  Running Vitest suite...`));
-     // Use --reporter=json to get JSON output
-     const vitestCmd = `yarn run test:vitest --run --reporter=json --outputFile="${vitestOutputFile}"`;
-     const vitestDiscoveryResult = await runCommand(vitestCmd, REPO_ROOT);
-     const vitestDiscoveryOutput = vitestDiscoveryResult.stdout + vitestDiscoveryResult.stderr;
-     const vitestStartupError = /Startup Error|failed to load config|ERR_REQUIRE_ESM/.test(vitestDiscoveryOutput);
-     
-     if (vitestStartupError) {
-         console.log(chalk.yellow(`  ⚠️ Vitest has a startup error (likely broken node_modules). Attempting yarn install...`));
-         await safeYarnInstall();
-         // Retry once after install
+     if (TEST_RUNNERS.includes('vitest')) {
+         const vitestOutputFile = 'vitest-results.json';
+         const vitestOutputPath = path.join(REPO_ROOT, vitestOutputFile);
          if (fs.existsSync(vitestOutputPath)) fs.unlinkSync(vitestOutputPath);
-         const retryResult = await runCommand(vitestCmd, REPO_ROOT);
-         const retryOutput = retryResult.stdout + retryResult.stderr;
-         if (/Startup Error|failed to load config|ERR_REQUIRE_ESM/.test(retryOutput)) {
-             console.log(chalk.yellow(`  ⚠️ Vitest still can't start after yarn install. Skipping Vitest discovery.`));
+
+         console.log(chalk.yellow(`  Running Vitest suite...`));
+         // Use --reporter=json to get JSON output
+         const vitestCmd = `${VITEST_CMD} --reporter=json --outputFile="${vitestOutputFile}"`;
+         const vitestDiscoveryResult = await runCommand(vitestCmd, REPO_ROOT);
+         const vitestDiscoveryOutput = vitestDiscoveryResult.stdout + vitestDiscoveryResult.stderr;
+         const vitestStartupError = /Startup Error|failed to load config|ERR_REQUIRE_ESM/.test(vitestDiscoveryOutput);
+
+         if (vitestStartupError) {
+             console.log(chalk.yellow(`  ⚠️ Vitest has a startup error (likely broken node_modules). Attempting yarn install...`));
+             await safeYarnInstall();
+             // Retry once after install
+             if (fs.existsSync(vitestOutputPath)) fs.unlinkSync(vitestOutputPath);
+             const retryResult = await runCommand(vitestCmd, REPO_ROOT);
+             const retryOutput = retryResult.stdout + retryResult.stderr;
+             if (/Startup Error|failed to load config|ERR_REQUIRE_ESM/.test(retryOutput)) {
+                 console.log(chalk.yellow(`  ⚠️ Vitest still can't start after yarn install. Skipping Vitest discovery.`));
+             } else if (fs.existsSync(vitestOutputPath)) {
+                 try {
+                     const testData = JSON.parse(fs.readFileSync(vitestOutputPath, 'utf8'));
+                     const failed = testData.testResults ? testData.testResults.filter(t => t.status === 'failed') : [];
+                     failed.forEach(t => {
+                         const p = t.name.startsWith(REPO_ROOT) ? t.name.slice(REPO_ROOT.length + 1) : t.name;
+                         failingTasks.push({ filePath: p, runner: 'vitest' });
+                     });
+                 } catch (e) {
+                     console.error(chalk.red("  Failed to parse Vitest results."), e.message);
+                 }
+             }
          } else if (fs.existsSync(vitestOutputPath)) {
              try {
                  const testData = JSON.parse(fs.readFileSync(vitestOutputPath, 'utf8'));
+                 // Vitest JSON is Jest-compatible in structure usually
                  const failed = testData.testResults ? testData.testResults.filter(t => t.status === 'failed') : [];
                  failed.forEach(t => {
                      const p = t.name.startsWith(REPO_ROOT) ? t.name.slice(REPO_ROOT.length + 1) : t.name;
@@ -2811,18 +2830,6 @@ async function runTestFixer() {
              } catch (e) {
                  console.error(chalk.red("  Failed to parse Vitest results."), e.message);
              }
-         }
-     } else if (fs.existsSync(vitestOutputPath)) {
-         try {
-             const testData = JSON.parse(fs.readFileSync(vitestOutputPath, 'utf8'));
-             // Vitest JSON is Jest-compatible in structure usually
-             const failed = testData.testResults ? testData.testResults.filter(t => t.status === 'failed') : [];
-             failed.forEach(t => {
-                 const p = t.name.startsWith(REPO_ROOT) ? t.name.slice(REPO_ROOT.length + 1) : t.name;
-                 failingTasks.push({ filePath: p, runner: 'vitest' });
-             });
-         } catch (e) {
-             console.error(chalk.red("  Failed to parse Vitest results."), e.message);
          }
      }
 
@@ -3242,46 +3249,61 @@ async function runBatchFixer() {
     const failingTasks = []; // Array of { filePath, runner }
 
     // Jest Discovery
-    const jestOutputFile = 'jest-results.json';
-    const jestOutputPath = path.join(REPO_ROOT, jestOutputFile);
-    if (fs.existsSync(jestOutputPath)) fs.unlinkSync(jestOutputPath);
+    if (TEST_RUNNERS.includes('jest') && JEST_CMD) {
+        const jestOutputFile = 'jest-results.json';
+        const jestOutputPath = path.join(REPO_ROOT, jestOutputFile);
+        if (fs.existsSync(jestOutputPath)) fs.unlinkSync(jestOutputPath);
 
-    console.log(chalk.yellow(`\n  Running Jest suite...`));
-    const jestCmd = `TZ="${TZ}" npx jest --maxWorkers=4 --json --outputFile="${jestOutputFile}"`;
-    await runCommand(jestCmd, REPO_ROOT);
+        console.log(chalk.yellow(`\n  Running Jest suite...`));
+        const jestCmd = `${JEST_CMD} --maxWorkers=4 --json --outputFile="${jestOutputFile}"`;
+        await runCommand(jestCmd, REPO_ROOT);
 
-    if (fs.existsSync(jestOutputPath)) {
-        try {
-            const testData = JSON.parse(fs.readFileSync(jestOutputPath, 'utf8'));
-            const failed = testData.testResults.filter(t => t.status === 'failed');
-            failed.forEach(t => {
-                const p = t.name.startsWith(REPO_ROOT) ? t.name.slice(REPO_ROOT.length + 1) : t.name;
-                failingTasks.push({ filePath: p, runner: 'jest' });
-            });
-        } catch (e) {
-            console.error(chalk.red("  Failed to parse Jest results."));
+        if (fs.existsSync(jestOutputPath)) {
+            try {
+                const testData = JSON.parse(fs.readFileSync(jestOutputPath, 'utf8'));
+                const failed = testData.testResults.filter(t => t.status === 'failed');
+                failed.forEach(t => {
+                    const p = t.name.startsWith(REPO_ROOT) ? t.name.slice(REPO_ROOT.length + 1) : t.name;
+                    failingTasks.push({ filePath: p, runner: 'jest' });
+                });
+            } catch (e) {
+                console.error(chalk.red("  Failed to parse Jest results."));
+            }
         }
     }
 
     // Vitest Discovery
-    const vitestOutputFile = 'vitest-results.json';
-    const vitestOutputPath = path.join(REPO_ROOT, vitestOutputFile);
-    if (fs.existsSync(vitestOutputPath)) fs.unlinkSync(vitestOutputPath);
-
-    console.log(chalk.yellow(`  Running Vitest suite...`));
-    const vitestCmd = `yarn run test:vitest --run --reporter=json --outputFile="${vitestOutputFile}"`;
-    const vitestDiscoveryResult = await runCommand(vitestCmd, REPO_ROOT);
-    const vitestDiscoveryOutput = vitestDiscoveryResult.stdout + vitestDiscoveryResult.stderr;
-    const vitestStartupError = /Startup Error|failed to load config|ERR_REQUIRE_ESM/.test(vitestDiscoveryOutput);
-
-    if (vitestStartupError) {
-        console.log(chalk.yellow(`  ⚠️ Vitest has a startup error. Attempting yarn install...`));
-        await safeYarnInstall();
+    if (TEST_RUNNERS.includes('vitest')) {
+        const vitestOutputFile = 'vitest-results.json';
+        const vitestOutputPath = path.join(REPO_ROOT, vitestOutputFile);
         if (fs.existsSync(vitestOutputPath)) fs.unlinkSync(vitestOutputPath);
-        const retryResult = await runCommand(vitestCmd, REPO_ROOT);
-        const retryOutput = retryResult.stdout + retryResult.stderr;
-        if (/Startup Error|failed to load config|ERR_REQUIRE_ESM/.test(retryOutput)) {
-            console.log(chalk.yellow(`  ⚠️ Vitest still can't start. Skipping Vitest discovery.`));
+
+        console.log(chalk.yellow(`  Running Vitest suite...`));
+        const vitestCmd = `${VITEST_CMD} --reporter=json --outputFile="${vitestOutputFile}"`;
+        const vitestDiscoveryResult = await runCommand(vitestCmd, REPO_ROOT);
+        const vitestDiscoveryOutput = vitestDiscoveryResult.stdout + vitestDiscoveryResult.stderr;
+        const vitestStartupError = /Startup Error|failed to load config|ERR_REQUIRE_ESM/.test(vitestDiscoveryOutput);
+
+        if (vitestStartupError) {
+            console.log(chalk.yellow(`  ⚠️ Vitest has a startup error. Attempting yarn install...`));
+            await safeYarnInstall();
+            if (fs.existsSync(vitestOutputPath)) fs.unlinkSync(vitestOutputPath);
+            const retryResult = await runCommand(vitestCmd, REPO_ROOT);
+            const retryOutput = retryResult.stdout + retryResult.stderr;
+            if (/Startup Error|failed to load config|ERR_REQUIRE_ESM/.test(retryOutput)) {
+                console.log(chalk.yellow(`  ⚠️ Vitest still can't start. Skipping Vitest discovery.`));
+            } else if (fs.existsSync(vitestOutputPath)) {
+                try {
+                    const testData = JSON.parse(fs.readFileSync(vitestOutputPath, 'utf8'));
+                    const failed = testData.testResults ? testData.testResults.filter(t => t.status === 'failed') : [];
+                    failed.forEach(t => {
+                        const p = t.name.startsWith(REPO_ROOT) ? t.name.slice(REPO_ROOT.length + 1) : t.name;
+                        failingTasks.push({ filePath: p, runner: 'vitest' });
+                    });
+                } catch (e) {
+                    console.error(chalk.red("  Failed to parse Vitest results."), e.message);
+                }
+            }
         } else if (fs.existsSync(vitestOutputPath)) {
             try {
                 const testData = JSON.parse(fs.readFileSync(vitestOutputPath, 'utf8'));
@@ -3293,17 +3315,6 @@ async function runBatchFixer() {
             } catch (e) {
                 console.error(chalk.red("  Failed to parse Vitest results."), e.message);
             }
-        }
-    } else if (fs.existsSync(vitestOutputPath)) {
-        try {
-            const testData = JSON.parse(fs.readFileSync(vitestOutputPath, 'utf8'));
-            const failed = testData.testResults ? testData.testResults.filter(t => t.status === 'failed') : [];
-            failed.forEach(t => {
-                const p = t.name.startsWith(REPO_ROOT) ? t.name.slice(REPO_ROOT.length + 1) : t.name;
-                failingTasks.push({ filePath: p, runner: 'vitest' });
-            });
-        } catch (e) {
-            console.error(chalk.red("  Failed to parse Vitest results."), e.message);
         }
     }
 
@@ -3745,56 +3756,60 @@ async function runWorkerMode() {
     await fixLintErrorsForFile(workerFile);
 
     // 2. Run related Jest tests
-    console.log(`\n  Running related Jest tests...`);
-    const jestCmd = `TZ="${TZ}" npx jest --findRelatedTests "${workerFile}" --json 2>/dev/null`;
-    const jestResult = await runCommand(jestCmd, REPO_ROOT);
+    if (TEST_RUNNERS.includes('jest') && JEST_CMD) {
+      console.log(`\n  Running related Jest tests...`);
+      const jestCmd = `${JEST_CMD} --findRelatedTests "${workerFile}" --json 2>/dev/null`;
+      const jestResult = await runCommand(jestCmd, REPO_ROOT);
 
-    if (jestResult.stdout.includes('"testResults"')) {
-      try {
-        const jsonStart = jestResult.stdout.indexOf('{');
-        const jestData = JSON.parse(jestResult.stdout.slice(jsonStart));
-        const jestFailed = (jestData.testResults || []).filter(t => t.status === 'failed');
-        if (jestFailed.length > 0) {
-          console.log(`  ${jestFailed.length} Jest test suite(s) failing`);
-          for (const t of jestFailed) {
-            const p = t.name.startsWith(REPO_ROOT) ? t.name.slice(REPO_ROOT.length + 1) : t.name;
-            await fixTestErrorsForFile(p, 'jest');
+      if (jestResult.stdout.includes('"testResults"')) {
+        try {
+          const jsonStart = jestResult.stdout.indexOf('{');
+          const jestData = JSON.parse(jestResult.stdout.slice(jsonStart));
+          const jestFailed = (jestData.testResults || []).filter(t => t.status === 'failed');
+          if (jestFailed.length > 0) {
+            console.log(`  ${jestFailed.length} Jest test suite(s) failing`);
+            for (const t of jestFailed) {
+              const p = t.name.startsWith(REPO_ROOT) ? t.name.slice(REPO_ROOT.length + 1) : t.name;
+              await fixTestErrorsForFile(p, 'jest');
+            }
+          } else {
+            console.log(`  ✅ Jest tests passed.`);
           }
-        } else {
-          console.log(`  ✅ Jest tests passed.`);
+        } catch (e) {
+          console.log(`  Could not parse Jest results: ${e.message}`);
         }
-      } catch (e) {
-        console.log(`  Could not parse Jest results: ${e.message}`);
+      } else {
+        console.log(`  ✅ No related Jest tests found.`);
       }
-    } else {
-      console.log(`  ✅ No related Jest tests found.`);
     }
 
     // 3. Run related Vitest tests
-    console.log(`\n  Running related Vitest tests...`);
-    const vitestCmd = `yarn run test:vitest --related "${workerFile}" --reporter=json 2>/dev/null`;
-    const vitestResult = await runCommand(vitestCmd, REPO_ROOT);
-    const vitestOutput = vitestResult.stdout + vitestResult.stderr;
+    if (TEST_RUNNERS.includes('vitest')) {
+      console.log(`\n  Running related Vitest tests...`);
+      const vitestCmd = `${VITEST_CMD} --related "${workerFile}" --reporter=json 2>/dev/null`;
+      const vitestResult = await runCommand(vitestCmd, REPO_ROOT);
+      const vitestOutput = vitestResult.stdout + vitestResult.stderr;
 
-    if (vitestOutput.includes('"testResults"')) {
-      try {
-        const jsonStart = vitestOutput.indexOf('{');
-        const vitestData = JSON.parse(vitestOutput.slice(jsonStart));
-        const vitestFailed = (vitestData.testResults || []).filter(t => t.status === 'failed');
-        if (vitestFailed.length > 0) {
-          console.log(`  ${vitestFailed.length} Vitest test suite(s) failing`);
-          for (const t of vitestFailed) {
-            const p = t.name.startsWith(REPO_ROOT) ? t.name.slice(REPO_ROOT.length + 1) : t.name;
-            await fixTestErrorsForFile(p, 'vitest');
+      if (vitestOutput.includes('"testResults"')) {
+        try {
+          const jsonStart = vitestOutput.indexOf('{');
+          const vitestData = JSON.parse(vitestOutput.slice(jsonStart));
+          const vitestFailed = (vitestData.testResults || []).filter(t => t.status === 'failed');
+          if (vitestFailed.length > 0) {
+            console.log(`  ${vitestFailed.length} Vitest test suite(s) failing`);
+            for (const t of vitestFailed) {
+              const p = t.name.startsWith(REPO_ROOT) ? t.name.slice(REPO_ROOT.length + 1) : t.name;
+              await fixTestErrorsForFile(p, 'vitest');
+            }
+          } else {
+            console.log(`  ✅ Vitest tests passed.`);
           }
-        } else {
-          console.log(`  ✅ Vitest tests passed.`);
+        } catch (e) {
+          console.log(`  Could not parse Vitest results: ${e.message}`);
         }
-      } catch (e) {
-        console.log(`  Could not parse Vitest results: ${e.message}`);
+      } else {
+        console.log(`  ✅ No related Vitest tests found.`);
       }
-    } else {
-      console.log(`  ✅ No related Vitest tests found.`);
     }
 
     // 4. TypeScript type check on changed files
