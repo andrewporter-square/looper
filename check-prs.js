@@ -21,24 +21,23 @@ const path = require('path');
 const fs = require('fs');
 const chalk = require('chalk');
 const OpenAI = require('openai');
+const config = require('./looper.config');
 
-const REPO_ROOT = process.env.LOOPER_REPO_ROOT || '/Users/aporter/Development/rocketship';
-const MAIN_BRANCH = 'master';
+const REPO_ROOT = config.repo.root;
+const MAIN_BRANCH = config.repo.mainBranch;
+const MODEL = config.ai.model;
+const I18N_RULE = config.lint.i18nRule;
+const DEFAULT_APP = config.defaultApp;
+const PR_CHECKLIST = config.pr.checklist;
 
 const REPO_ENV = {
   ...process.env,
   PATH: `${REPO_ROOT}/node_modules/.bin:${REPO_ROOT}/bin:${process.env.PATH}`,
-  HERMIT_BIN: `${REPO_ROOT}/bin`,
-  HERMIT_ENV: REPO_ROOT,
+  ...(config.env.hermit ? { HERMIT_BIN: `${REPO_ROOT}/bin`, HERMIT_ENV: REPO_ROOT } : {}),
 };
 
 // Branch patterns that indicate a looper-created PR
-const LOOPER_BRANCH_PATTERNS = [
-  /^feat\/.*\/static-i18n-keys-/,
-  /^feat\/auto-fix-/,
-  /^fix\/lint-/,
-  /^feat\/core\/static-i18n-keys-/,
-];
+const LOOPER_BRANCH_PATTERNS = config.branches.patterns;
 
 function isLooperBranch(branchName) {
   return LOOPER_BRANCH_PATTERNS.some(re => re.test(branchName));
@@ -58,16 +57,7 @@ async function runCommand(command, cwd = REPO_ROOT) {
   });
 }
 
-// PR checklist (same as index.js)
-const PR_CHECKLIST = [
-  '',
-  '**Checklist (all items to be checked before merging or put reason why in brackets):**',
-  '- [ ] Changes are tested',
-  '- [ ] Includes unit tests and feature flags (or not applicable)',
-  "- [ ] I've masked consumer privacy data in Datadog by `MaskedElement` (e.g. credit card number, consumer name, email address), some fields may be masked by [Datadog](https://docs.datadoghq.com/real_user_monitoring/session_replay/privacy_options/) by default",
-  "- [ ] I've adopted standard practices according to [these guidelines](https://github.com/AfterpayTouch/rocketship/blob/master/docs/standard-practices.md) and agree to monitor the [#rocketship-alerts-dev](https://square.slack.com/archives/C034LH11K4Y) channel for broken builds. Broken builds caused by this pull request merge should be fixed by the original contributor. Reach out to [#rocketship-dev-team](https://square.slack.com/archives/C033Q541WS2) if you have questions.",
-  "- [ ] I've confirmed the changes do not affect regulatory product such as Pay Monthly. If it is Pay Monthly changes, it is an approved change and the changes are applied behind feature flags.",
-].join('\n');
+// PR checklist is loaded from config (same as index.js)
 
 // Build a proper PR body for a looper branch
 function buildPRBody(pr, changedFiles) {
@@ -75,7 +65,7 @@ function buildPRBody(pr, changedFiles) {
   return [
     '## Summary',
     '',
-    'Replace dynamic i18n key construction with static string literals to satisfy the `@afterpay/i18n-only-static-keys` ESLint rule.',
+    `Replace dynamic i18n key construction with static string literals to satisfy the \`${I18N_RULE}\` ESLint rule.`,
     '',
     'All translation keys passed to `t()` are now statically analyzable, enabling reliable key extraction and dead-key detection.',
     '',
@@ -87,12 +77,12 @@ function buildPRBody(pr, changedFiles) {
     '',
     '- Replaced dynamic template literal keys with static string literals',
     '- Used declarative Record maps to enumerate all possible translation keys per enum/type',
-    '- Removed corresponding entries from `eslint-suppressions.json`',
+    `- Removed corresponding entries from \`${config.lint.suppressionsFile}\``,
     '- Preserved all existing runtime behavior — no logic changes',
     '',
     '## Testing',
     '',
-    '- ESLint passes with no `@afterpay/i18n-only-static-keys` violations',
+    `- ESLint passes with no \`${I18N_RULE}\` violations`,
     '- All existing tests pass',
     '- TypeScript type checking passes',
   ].join('\n') + PR_CHECKLIST;
@@ -633,7 +623,7 @@ function isPlaywrightFailure(check, logData) {
   if (envMatch) result.browserEnv = envMatch[1];
 
   // Extract APP_NAME from container name or check name
-  const containerMatch = fullLogs.match(/rocketship-ci-(\w+)-/i);
+  const containerMatch = fullLogs.match(new RegExp(`${config.ci.containerPattern}(\\w+)-`, 'i'));
   if (containerMatch) result.appName = containerMatch[1];
 
   // Extract failed test files
@@ -675,7 +665,7 @@ function isPlaywrightFailure(check, logData) {
 
   // Infer app name from tags or check name
   if (!result.appName) {
-    if (result.tags?.includes('checkout') || checkName.includes('checkout')) result.appName = 'checkout';
+    if (result.tags?.includes(DEFAULT_APP) || checkName.includes(DEFAULT_APP)) result.appName = DEFAULT_APP;
     else if (result.tags?.includes('portal') || checkName.includes('portal')) result.appName = 'portal';
   }
 
@@ -845,9 +835,9 @@ function summarizePlaywrightResults(testResults) {
 async function runPlaywrightTestsLocally(pwInfo, branch) {
   console.log(chalk.bold.yellow(`\n  🎭 Running Playwright tests locally...`));
 
-  const tags = pwInfo.tags || '@checkout_local_regression_preferred_day';
+  const tags = pwInfo.tags || config.e2e.fallbackTag;
   const browserEnv = pwInfo.browserEnv || 'ci-local';
-  const appName = pwInfo.appName || 'checkout';
+  const appName = pwInfo.appName || DEFAULT_APP;
 
   console.log(chalk.gray(`    Tags: ${tags}`));
   console.log(chalk.gray(`    Browser env: ${browserEnv}`));
@@ -882,23 +872,23 @@ async function runPlaywrightTestsLocally(pwInfo, branch) {
     console.log(chalk.yellow(`    ⚠️  AWS credentials not available. Attempting ECR login...`));
     // Try to login via the ecr plugin approach used in CI
     const ecrLogin = await runCommand(
-      `aws ecr get-login-password --region ap-southeast-2 | docker login --username AWS --password-stdin 361053881171.dkr.ecr.ap-southeast-2.amazonaws.com 2>&1`,
+      `aws ecr get-login-password --region ${config.aws.region} | docker login --username AWS --password-stdin ${config.aws.ecrUrl} 2>&1`,
       REPO_ROOT
     );
     if (!ecrLogin.success) {
       console.log(chalk.red(`    Cannot authenticate to ECR. Run 'aws configure' or set AWS credentials first.`));
-      console.log(chalk.dim(`    The playwright tests need Docker images from ECR (checkout, mocks, landing).`));
-      console.log(chalk.dim(`    Alternatively, use 'make playwright-local-tests-build' to build images locally.`));
+      console.log(chalk.dim(`    The playwright tests need Docker images from ECR.`));
+      console.log(chalk.dim(`    Alternatively, use 'make ${config.e2e.buildTarget}' to build images locally.`));
       return { success: false, output: 'ECR auth failed', testResults: null };
     }
   }
 
   // Run the tests
-  console.log(chalk.yellow(`    Running: make playwright-local-tests ...`));
+  console.log(chalk.yellow(`    Running: make ${config.e2e.makeTarget} ...`));
   console.log(chalk.dim(`    This typically takes 2-5 minutes.\n`));
 
   const testResult = await runCommand(
-    `BROWSER_ENV=${browserEnv} PLAYWRIGHT_TAGS='${tags}' APP_NAME=${appName} /usr/bin/make playwright-local-tests 2>&1`,
+    `BROWSER_ENV=${browserEnv} PLAYWRIGHT_TAGS='${tags}' APP_NAME=${appName} /usr/bin/make ${config.e2e.makeTarget} 2>&1`,
     REPO_ROOT
   );
 
@@ -1252,7 +1242,7 @@ async function fixFromComments(pr, commentData) {
   const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
   const triageResponse = await client.chat.completions.create({
-    model: 'gpt-5.2-2025-12-11',
+    model: MODEL,
     temperature: 0,
     max_completion_tokens: 2048,
     messages: [

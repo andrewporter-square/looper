@@ -1,8 +1,8 @@
 # Looper
 
-**Automated ESLint, TypeScript, test, and E2E fixer agent for the Rocketship monorepo.**
+**Automated ESLint, TypeScript, test, and E2E fixer agent for TypeScript/React monorepos.**
 
-Looper uses OpenAI to automatically fix lint violations (especially `@afterpay/i18n-only-static-keys`), TypeScript type errors, failing unit/integration tests, and Playwright E2E tests across the Rocketship codebase. It creates branches, applies fixes, runs validation, and opens PRs — all automated.
+Looper uses OpenAI to automatically fix lint violations (including custom ESLint rules like i18n static-key enforcement), TypeScript type errors, failing unit/integration tests, and Playwright E2E tests across your codebase. It creates branches, applies fixes, runs validation, and opens PRs — all automated.
 
 ## Quick Start
 
@@ -16,7 +16,7 @@ cp .env.example .env
 # Edit .env with your OPENAI_API_KEY, LOOPER_REPO_ROOT, and BUILDKITE_TOKEN
 
 # 3. Add files to fix
-echo '["apps/checkout/src/page/example/Example.tsx"]' > list.json
+echo '["apps/myapp/src/page/example/Example.tsx"]' > list.json
 
 # 4. Run
 node index.js --parallel
@@ -28,20 +28,30 @@ node index.js --parallel
 |---|---|---|
 | Node.js | 18+ | Tested on 24.x |
 | `gh` CLI | 2.x+ | Authenticated with `gh auth login` |
-| Git | 2.30+ | With push access to Rocketship |
+| Git | 2.30+ | With push access to your target repo |
 | OpenAI API key | — | Needs GPT-4o / GPT-5 access |
-| Rocketship repo | — | Cloned locally with `yarn install` done |
+| Target repo | — | Cloned locally with dependencies installed |
 | Docker Desktop | — | Required for E2E tests (optional otherwise) |
-| AWS CLI + saml2aws | — | Required for E2E Docker image pulls (optional otherwise) |
+| AWS CLI | — | Required for E2E Docker image pulls from private ECR (optional) |
 
-## Configuration
+### Configuration
 
-All configuration is via environment variables (`.env` file):
+Copy the example config and customize for your repo:
+
+```bash
+cp looper.config.example.js looper.config.js
+```
+
+Edit `looper.config.js` to set your repo path, app name, branch naming, E2E tag mappings, PR checklist, and other repo-specific settings. See `looper.config.example.js` for all available options.
+
+## Environment Variables
+
+Additional configuration is via environment variables (`.env` file):
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `OPENAI_API_KEY` | Yes | — | OpenAI API key |
-| `LOOPER_REPO_ROOT` | No | `/Users/aporter/Development/rocketship` | Path to local Rocketship checkout |
+| `LOOPER_REPO_ROOT` | No | `/path/to/your/repo` | Path to target repo (also set in looper.config.js) |
 | `LOOPER_CONCURRENCY` | No | `3` | Number of parallel workers for `--parallel` mode |
 | `BUILDKITE_TOKEN` | No | — | Buildkite API token for fetching CI build logs |
 
@@ -97,14 +107,14 @@ Runs Playwright E2E tests in Docker, auto-detects relevant test tags from branch
 
 ```bash
 node index.js --e2e                          # Auto-detect tags, Docker
-node index.js --e2e --e2e-tags=@checkout_local_smoke  # Specific tag
+node index.js --e2e --e2e-tags=@your_app_smoke  # Specific tag
 node index.js --e2e --e2e-native             # Without Docker
 node index.js --e2e --e2e-headed             # Show browser
 node index.js --e2e --no-fix                 # Skip auto-fix on failure
 ```
 
 **Features:**
-- Auto-resolves E2E tags from changed files (e.g., `PaymentMethod` → `@checkout_local_regression_payment_method`)
+- Auto-resolves E2E tags from changed files (e.g., component changes → matching E2E tags)
 - Docker mode with automatic AWS/ECR authentication
 - Pre-existing failure detection: skips failures that also fail on master
 - AI-powered E2E failure fixer with Playwright JSON result parsing
@@ -118,7 +128,7 @@ node check-prs.js                  # List & check all looper PRs
 node check-prs.js --fix            # Fix CI failures (full pipeline) + review comments
 node check-prs.js --fix-comments   # Only fix review comment feedback
 node check-prs.js --author @me     # Filter by author (default: @me)
-node check-prs.js --label checkout # Filter by label
+node check-prs.js --label myapp # Filter by label
 ```
 
 **Features:**
@@ -213,10 +223,10 @@ Looper auto-detects which Playwright E2E test suites to run based on changed fil
 
 ```
 Changed files → pattern matching → E2E tags
-  PaymentMethod.tsx     → @checkout_local_regression_payment_method
-  Login.tsx             → @checkout_local_regression_au_login
-  ConsumerLending.tsx   → @checkout_local_regression_cl_us
-  (no match)            → @checkout_local_smoke (fallback)
+  ComponentA.tsx  → @app_regression_component_a
+  FeatureB.tsx    → @app_regression_feature_b
+  PageC.tsx       → @app_regression_page_c
+  (no match)      → @app_smoke (fallback)
 ```
 
 20+ patterns map source directories/components to specific E2E regression tags.
@@ -259,6 +269,5 @@ looper/
 
 ## Support
 
-- **Slack**: [#rocketship-dev-team](https://square.slack.com/archives/C033Q541WS2)
 - **Issues**: Open an issue in this repository
-- **PR Reviews**: Tag `@AfterpayTouch/rocketship-checkout` for review
+- See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines

@@ -5,6 +5,7 @@ const { exec } = require('child_process');
 const readline = require('readline');
 const OpenAI = require('openai');
 const chalk = require('chalk');
+const config = require('./looper.config');
 
 const client = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -15,15 +16,20 @@ const rl = readline.createInterface({
   output: process.stdout
 });
 
-const REPO_ROOT = process.env.LOOPER_REPO_ROOT || '/Users/aporter/Development/rocketship';
-const MAIN_BRANCH = 'master';
+const REPO_ROOT = config.repo.root;
+const MAIN_BRANCH = config.repo.mainBranch;
+const MODEL = config.ai.model;
+const I18N_RULE = config.lint.i18nRule;
+const TZ = config.timezone;
+const DEFAULT_APP = config.defaultApp;
+const PR_CHECKLIST = config.pr.checklist;
+const SKIP_PATH_PATTERNS = config.skipPathPatterns;
 
-// Hermit env: prepend rocketship bin paths so exec() uses the right Node/yarn/vitest
+// Hermit env: prepend repo bin paths so exec() uses the right Node/yarn/vitest
 const REPO_ENV = {
   ...process.env,
   PATH: `${REPO_ROOT}/node_modules/.bin:${REPO_ROOT}/bin:${process.env.PATH}`,
-  HERMIT_BIN: `${REPO_ROOT}/bin`,
-  HERMIT_ENV: REPO_ROOT,
+  ...(config.env.hermit ? { HERMIT_BIN: `${REPO_ROOT}/bin`, HERMIT_ENV: REPO_ROOT } : {}),
 };
 
 // --- BATCH FIXER LOGIC ---
@@ -431,77 +437,15 @@ async function gatherPRCIContext() {
  * Inspects file paths and component/page/state directory names to determine
  * which E2E test suites are most likely affected.
  *
- * Falls back to @checkout_local_smoke if no specific mapping matches.
+ * Falls back to smoke tags if no specific mapping matches.
  */
-function resolveE2ETagsFromChanges(changedFiles, app = 'checkout') {
+function resolveE2ETagsFromChanges(changedFiles, app = DEFAULT_APP) {
   if (!changedFiles || changedFiles.length === 0) {
-    return `@${app.replace('-', '_')}_local_smoke`;
+    return config.e2e.defaultSmokeTags || `@${app.replace('-', '_')}_local_smoke`;
   }
 
-  // ── Source path pattern → E2E tag mapping ────────────────────────────────
-  // Each entry: { pattern: RegExp against file path, tags: string[] }
-  // Order matters — more specific patterns first.
-  const TAG_MAP = [
-    // Preferred day
-    { pattern: /preferredDay|preferred-day|PreferredDay|preferred.payment.day/i, tags: ['@checkout_local_regression_preferred_day'] },
-
-    // Payment method / credit cards
-    { pattern: /paymentMethod|PaymentMethod|creditCard|CreditCard|TopazCard|CardForm|CardPayment|NewPaymentMethod/i, tags: ['@checkout_local_regression_payment_method'] },
-
-    // Login / auth
-    { pattern: /\/login\/|\/auth\/|Login\.|CashIdentifyAccount|CashInlineAuth|CashVerifyChallenge|Password/i, tags: ['@checkout_local_regression_au_login'] },
-
-    // Signup / registration / create account
-    { pattern: /signup|sign-up|CreateAccount|registration|NewConsumer/i, tags: ['@checkout_local_regression_au_sign_up'] },
-
-    // Identity / KYC / biometric
-    { pattern: /identity|Identity|biometric|Biometric|AccountKYC|DriversLicence|verify-identity/i, tags: ['@checkout_local_regression_ca_identity', '@checkout_local_regression_eu_identity'] },
-
-    // Overdue payments
-    { pattern: /overduePayment|overdue-payment|OverduePayment/i, tags: ['@checkout_local_regression_overdue_payments', '@checkout_local_regression_au_overdue_payments'] },
-
-    // Risk decline
-    { pattern: /riskDecline|risk-decline|RiskDecline/i, tags: ['@checkout_local_regression_au_risk_decline_terminal', '@checkout_local_regression_au_risk_decline_recovery'] },
-
-    // Account decline
-    { pattern: /accountDecline|account-decline|AccountDecline/i, tags: ['@checkout_local_regression_au_account_decline'] },
-
-    // Order decline
-    { pattern: /orderDecline|order-decline|OrderDecline/i, tags: ['@checkout_local_regression_au_order_decline'] },
-
-    // Payment decline
-    { pattern: /paymentDecline|payment-decline|PaymentDecline/i, tags: ['@checkout_local_regression_au_payment_decline'] },
-
-    // Other decline
-    { pattern: /otherDecline|other-decline|OtherDecline/i, tags: ['@checkout_local_regression_au_other_decline'] },
-
-    // Consumer lending
-    { pattern: /consumerLending|consumer-lending|ConsumerLending|PaymentPlan|PaymentSchedule/i, tags: ['@checkout_local_regression_cl_us'] },
-
-    // Autopay
-    { pattern: /autopay|Autopay|AutopayToggle/i, tags: ['@checkout_local_regression_autopay_feature'] },
-
-    // Donation / PUF
-    { pattern: /donation|Donation|PUF|puf/i, tags: ['@checkout_local_regression_au_donation_and_puf'] },
-
-    // Cash convergence
-    { pattern: /convergence|Convergence|CashConvergence|cashAuth/i, tags: ['@checkout_local_regression_cash_cohort'] },
-
-    // Summary page (broad — shipping address, summary components, etc.)
-    { pattern: /summary|Summary|ShippingAddress|shipping-address|EditShippingAddress|FinanceFee|Disclaimer/i, tags: ['@checkout_local_regression_nz'] },
-
-    // Post-checkout / pre-capture
-    { pattern: /postCheckout|post-checkout|PostCheckout|preCapture|pre-capture/i, tags: ['@checkout_local_pre_capture'] },
-
-    // Cross-border
-    { pattern: /crossBorder|cross-border|CrossBorder/i, tags: ['@checkout_local_regression_nz'] },
-
-    // NZ-specific
-    { pattern: /\/nz\/|\.nz\./i, tags: ['@checkout_local_regression_nz'] },
-
-    // Pre-checkout
-    { pattern: /preCheckout|pre-checkout/i, tags: ['@checkout_local_regression_au_pre_checkout'] },
-  ];
+  // ── Source path pattern → E2E tag mapping (from config) ──────────────────
+  const TAG_MAP = config.e2e.tagMap || [];
 
   const matchedTags = new Set();
 
@@ -519,11 +463,11 @@ function resolveE2ETagsFromChanges(changedFiles, app = 'checkout') {
   if (matchedTags.size === 0) {
     // No specific match — fall back to smoke tests
     console.log(chalk.yellow(`  No specific E2E tag match for changed files. Running smoke tests.`));
-    return `@${app.replace('-', '_')}_local_smoke`;
+    return config.e2e.defaultSmokeTags || `@${app.replace('-', '_')}_local_smoke`;
   }
 
   // Always include smoke as a baseline
-  matchedTags.add(`@${app.replace('-', '_')}_local_smoke`);
+  matchedTags.add(config.e2e.defaultSmokeTags || `@${app.replace('-', '_')}_local_smoke`);
 
   const tagList = [...matchedTags];
   console.log(chalk.blue(`  Auto-detected ${tagList.length} E2E tag(s) from ${changedFiles.length} changed file(s):`));
@@ -559,7 +503,7 @@ function resolveE2ETagsFromChanges(changedFiles, app = 'checkout') {
  */
 async function runE2ETests(options = {}) {
   const {
-    app = 'checkout',
+    app = DEFAULT_APP,
     tags = '',
     browserEnv = options.useDocker === false ? 'local' : 'ci-local',
     useDocker = true,
@@ -595,20 +539,20 @@ async function runE2ETests(options = {}) {
 
     // Check AWS/ECR login (needed to pull mocks/checkout/landing images)
     console.log(chalk.yellow(`  Checking AWS credentials...`));
-    let awsCheck = await runCommand(`aws sts get-caller-identity --profile saml 2>&1`);
+    let awsCheck = await runCommand(`aws sts get-caller-identity --profile ${config.aws.profile} 2>&1`);
     if (!awsCheck.success) {
       console.log(chalk.red(`  ❌ AWS credentials expired or not configured.`));
-      console.log(chalk.yellow(`  Running saml2aws login (interactive — you may need to enter your password/MFA)...`));
+      console.log(chalk.yellow(`  Running AWS auth login (interactive — you may need to enter your password/MFA)...`));
 
-      // Try to run saml2aws login automatically; will prompt for password/MFA in the terminal
-      const loginResult = await runCommand(`saml2aws login --profile=saml --skip-prompt 2>&1 || saml2aws login --profile=saml 2>&1`);
+      // Try to run AWS auth login automatically; will prompt for password/MFA in the terminal
+      const loginResult = await runCommand(`${config.aws.authCommandSkipPrompt} 2>&1 || ${config.aws.authCommand} 2>&1`);
       
       // Re-check credentials after login attempt
-      awsCheck = await runCommand(`aws sts get-caller-identity --profile saml 2>&1`);
+      awsCheck = await runCommand(`aws sts get-caller-identity --profile ${config.aws.profile} 2>&1`);
       if (!awsCheck.success) {
         // If auto-login failed, wait for user to do it manually  
-        console.log(chalk.yellow(`\n  ⚠️ Auto-login didn't work. Please run saml2aws manually:`));
-        console.log(chalk.bold.white(`    saml2aws login --profile=saml\n`));
+        console.log(chalk.yellow(`\n  ⚠️ Auto-login didn't work. Please run the auth command manually:`));
+        console.log(chalk.bold.white(`    ${config.aws.authCommand}\n`));
         console.log(chalk.yellow(`  Waiting for valid credentials (checking every 15s)...`));
         
         // Poll for up to 5 minutes for the user to authenticate
@@ -619,7 +563,7 @@ async function runE2ETests(options = {}) {
         
         while (Date.now() - startTime < maxWait) {
           await new Promise(r => setTimeout(r, pollInterval));
-          const recheck = await runCommand(`aws sts get-caller-identity --profile saml 2>&1`);
+          const recheck = await runCommand(`aws sts get-caller-identity --profile ${config.aws.profile} 2>&1`);
           if (recheck.success) {
             authenticated = true;
             break;
@@ -629,8 +573,8 @@ async function runE2ETests(options = {}) {
         }
         
         if (!authenticated) {
-          console.log(chalk.red(`\n  ❌ Timed out waiting for AWS credentials (5 min). Run: saml2aws login --profile=saml`));
-          return { success: false, output: 'AWS credentials expired. Run: saml2aws login --profile=saml', failedTests: [] };
+          console.log(chalk.red(`\n  ❌ Timed out waiting for AWS credentials (5 min). Run: ${config.aws.authCommand}`));
+          return { success: false, output: `AWS credentials expired. Run: ${config.aws.authCommand}`, failedTests: [] };
         }
       }
       console.log(chalk.green(`  ✅ AWS credentials now valid.`));
@@ -640,7 +584,7 @@ async function runE2ETests(options = {}) {
 
     // ECR login
     console.log(chalk.yellow(`  Logging into ECR...`));
-    const ecrResult = await runCommand(`make ecr-login`, REPO_ROOT);
+    const ecrResult = await runCommand(`${config.aws.ecrLoginCommand}`, REPO_ROOT);
     if (!ecrResult.success) {
       console.log(chalk.yellow(`  ⚠️ ECR login had issues (may still work if images are cached).`));
       console.log(chalk.dim((ecrResult.stderr || ecrResult.stdout).slice(0, 200)));
@@ -680,11 +624,11 @@ async function runE2ETests(options = {}) {
     console.log(chalk.yellow(`  Cleaning up stale containers...`));
     const checkoutVersion = await runCommand(`cat apps/checkout/package.json | jq -r '.version'`, REPO_ROOT);
     const tag = checkoutVersion.success ? checkoutVersion.stdout.trim() : 'latest';
-    await runCommand(`TAG=${tag} docker-compose -f docker-compose.playwright.yml down --remove-orphans 2>/dev/null || true`, REPO_ROOT);
+    await runCommand(`TAG=${tag} docker-compose -f ${config.e2e.dockerComposeFile} down --remove-orphans 2>/dev/null || true`, REPO_ROOT);
 
     // Run via make target (docker-compose)
     console.log(chalk.yellow(`  Running E2E tests via docker-compose (this may take several minutes)...`));
-    const e2eCmd = `BROWSER_ENV=${browserEnv} PLAYWRIGHT_TAGS='${resolvedTags}' APP_NAME=${app} make playwright-local-tests`;
+    const e2eCmd = `BROWSER_ENV=${browserEnv} PLAYWRIGHT_TAGS='${resolvedTags}' APP_NAME=${app} make ${config.e2e.makeTarget}`;
     let e2eResult = await runCommand(e2eCmd, REPO_ROOT);
     let e2eOutput = (e2eResult.stdout + e2eResult.stderr);
 
@@ -695,7 +639,7 @@ async function runE2ETests(options = {}) {
     // Retry once on infrastructure failures (containers may need a cold start)
     if (!e2eResult.success && isInfraFailure) {
       console.log(chalk.yellow(`  ⚠️ Possible infrastructure issue detected. Restarting containers and retrying...`));
-      await runCommand(`TAG=${tag} docker-compose -f docker-compose.playwright.yml down --remove-orphans 2>/dev/null || true`, REPO_ROOT);
+      await runCommand(`TAG=${tag} docker-compose -f ${config.e2e.dockerComposeFile} down --remove-orphans 2>/dev/null || true`, REPO_ROOT);
       // Brief wait for ports to release
       await new Promise(r => setTimeout(r, 5000));
       e2eResult = await runCommand(e2eCmd, REPO_ROOT);
@@ -914,7 +858,7 @@ async function fixE2EFailures({ failedTests, changedFiles = [], e2eOptions = {} 
     // Restart all containers
     const checkoutVersion = await runCommand(`cat apps/checkout/package.json | jq -r '.version'`, REPO_ROOT);
     const tag = checkoutVersion.success ? checkoutVersion.stdout.trim() : 'latest';
-    await runCommand(`TAG=${tag} docker-compose -f docker-compose.playwright.yml down --remove-orphans 2>/dev/null || true`, REPO_ROOT);
+    await runCommand(`TAG=${tag} docker-compose -f ${config.e2e.dockerComposeFile} down --remove-orphans 2>/dev/null || true`, REPO_ROOT);
     await new Promise(r => setTimeout(r, 5000));
 
     // Re-run E2E tests with fresh containers
@@ -930,7 +874,7 @@ async function fixE2EFailures({ failedTests, changedFiles = [], e2eOptions = {} 
     const stillMockIssue = retryFailures.some(f => /Mock servers are not running/i.test(f.errorContext || ''));
     if (stillMockIssue) {
       console.log(chalk.red(`  ❌ Mock servers still not connecting after restart. This is a Docker networking issue.`));
-      console.log(chalk.yellow(`  Try manually: docker-compose -f docker-compose.playwright.yml down && make playwright-local-tests`));
+      console.log(chalk.yellow(`  Try manually: docker-compose -f ${config.e2e.dockerComposeFile} down && make ${config.e2e.makeTarget}`));
       return { success: false, fixedCount: 0, totalFailures: failedTests.length, infrastructure: true };
     }
     // If retry produced different failures, fall through to agent fix
@@ -1063,7 +1007,7 @@ TOOLS AVAILABLE:
       }, 1000);
 
       const response = await client.chat.completions.create({
-        model: 'gpt-5.2-2025-12-11',
+        model: MODEL,
         messages,
         tools: Object.values(tools).map(t => t.definition),
         tool_choice: 'auto',
@@ -1232,7 +1176,7 @@ async function runE2ERunner() {
   const useDocker = !args.includes('--e2e-native');
   const headless = !args.includes('--e2e-headed');
   const appArg = args.find(a => a.startsWith('--e2e-app='));
-  const app = appArg ? appArg.split('=')[1] : 'checkout';
+  const app = appArg ? appArg.split('=')[1] : DEFAULT_APP;
   const tagsArg = args.find(a => a.startsWith('--e2e-tags='));
   const tags = tagsArg ? tagsArg.split('=')[1] : '';
 
@@ -1363,20 +1307,6 @@ function pruneMessages(messages, maxTokens = 100000) {
   return pruned;
 }
 
-// PR checklist appended to every PR description
-const PR_CHECKLIST = [
-  '',
-  '**Checklist (all items to be checked before merging or put reason why in brackets):**',
-  '- [ ] Changes are tested',
-  '- [ ] Includes unit tests and feature flags (or not applicable)',
-  "- [ ] I've masked consumer privacy data in Datadog by `MaskedElement` (e.g. credit card number, consumer name, email address), some fields may be masked by [Datadog](https://docs.datadoghq.com/real_user_monitoring/session_replay/privacy_options/) by default",
-  "- [ ] I've adopted standard practices according to [these guidelines](https://github.com/AfterpayTouch/rocketship/blob/master/docs/standard-practices.md) and agree to monitor the [#rocketship-alerts-dev](https://square.slack.com/archives/C034LH11K4Y) channel for broken builds. Broken builds caused by this pull request merge should be fixed by the original contributor. Reach out to [#rocketship-dev-team](https://square.slack.com/archives/C033Q541WS2) if you have questions.",
-  "- [ ] I've confirmed the changes do not affect regulatory product such as Pay Monthly. If it is Pay Monthly changes, it is an approved change and the changes are applied behind feature flags.",
-].join('\n');
-
-// Paths that should never be processed by the fixer agents
-const SKIP_PATH_PATTERNS = /^(\.hermit|node_modules|dist|build|\.next|\.git|\.yarn|coverage|storybook)[\/]/;
-
 // Generate a detailed PR explanation by sending the diff to the LLM
 async function generatePRExplanation(baseBranch, headRef, changedFiles) {
   console.log(chalk.yellow(`  Generating detailed PR explanation from diff...`));
@@ -1393,7 +1323,7 @@ async function generatePRExplanation(baseBranch, headRef, changedFiles) {
     }
 
     const explanationResponse = await client.chat.completions.create({
-      model: 'gpt-5.2-2025-12-11',
+      model: MODEL,
       messages: [
         {
           role: 'system',
@@ -1499,7 +1429,7 @@ async function fixLintErrorsForFile(relativePath) {
   // Detect t(`...${variable}...`) patterns and resolve the variable's type
   let dynamicKeyResearch = '';
   const lintOutput = lintResult.stdout + lintResult.stderr;
-  const hasI18nStaticKeysError = /i18n-only-static-keys/.test(lintOutput);
+  const hasI18nStaticKeysError = I18N_RULE && new RegExp(I18N_RULE).test(lintOutput);
   
   if (hasI18nStaticKeysError) {
     console.log(chalk.blue(`  🔍 Pre-researching dynamic i18n key types...`));
@@ -1680,7 +1610,7 @@ ENVIRONMENT:
 GOAL: Fix ALL reported ESLint errors in the target file.
 
 RULES:
-1. Fix the ERRORS, not just suppress them. NEVER use eslint-disable comments for @afterpay/i18n-only-static-keys — that rule CANNOT be suppressed. For other rules, only use eslint-disable as an absolute last resort.
+1. Fix the ERRORS, not just suppress them. NEVER use eslint-disable comments for ${I18N_RULE} — that rule CANNOT be suppressed. For other rules, only use eslint-disable as an absolute last resort.
 2. Always provide the COMPLETE file content when using write_file — never partial.
 3. Do NOT change the file's logic or behavior — only fix lint violations.
 4. If an error is about an import, USE read_file to check what the imported module actually exports.
@@ -1706,9 +1636,9 @@ COMMON ESLINT RULES IN THIS REPO:
 - no-restricted-imports: Check .eslintrc for restricted import patterns
 - @typescript-eslint/consistent-type-imports: Use 'import type' for type-only imports
 - simple-import-sort/imports: Sort imports per plugin config
-- @afterpay/i18n-only-static-keys: Translation keys passed to t() MUST be static string literals, NOT dynamic/template expressions.
+- ${I18N_RULE}: Translation keys passed to t() MUST be static string literals, NOT dynamic/template expressions.
 
-FIXING @afterpay/i18n-only-static-keys (CRITICAL — follow this process exactly):
+FIXING ${I18N_RULE} (CRITICAL — follow this process exactly):
 DO NOT use eslint-disable or eslint-disable-next-line for this rule. It is NOT allowed and will be rejected.
 
 HOW THE LINT RULE WORKS:
@@ -1864,7 +1794,7 @@ TOOLS AVAILABLE:
         }, 1000);
 
         const response = await client.chat.completions.create({
-            model: "gpt-5.2-2025-12-11",
+            model: MODEL,
             messages: messages,
             tools: Object.values(tools).map(t => t.definition),
             tool_choice: "auto",
@@ -1980,8 +1910,8 @@ TOOLS AVAILABLE:
         ? commitParts[1] : 'core';
     const componentName = path.basename(relativePath, path.extname(relativePath));
     
-    await runCommand(`git add "${relativePath}" "eslint-suppressions.json"`, REPO_ROOT);
-    await runCommand(`git commit --no-verify -m "feat(${commitScope}): migrate ${componentName} to static i18n keys" -m "Replace dynamic i18n key construction with static string literals to satisfy the @afterpay/i18n-only-static-keys ESLint rule. All translation keys are now statically analyzable."`, REPO_ROOT);
+    await runCommand(`git add "${relativePath}" "${config.lint.suppressionsFile}"`, REPO_ROOT);
+    await runCommand(`git commit --no-verify -m "feat(${commitScope}): migrate ${componentName} to static i18n keys" -m "Replace dynamic i18n key construction with static string literals to satisfy the ${I18N_RULE} ESLint rule. All translation keys are now statically analyzable."`, REPO_ROOT);
 
     if (!BATCH_MODE) {
         const branchCheck = await runCommand(`git branch --show-current`, REPO_ROOT);
@@ -2119,7 +2049,7 @@ TOOLS AVAILABLE:
         }, 1000);
 
         const response = await client.chat.completions.create({
-            model: "gpt-5.2-2025-12-11",
+            model: MODEL,
             messages: messages,
             tools: Object.values(tools).map(t => t.definition),
             tool_choice: "auto",
@@ -2226,7 +2156,7 @@ TOOLS AVAILABLE:
         ? tCommitParts[1] : 'core';
     const tComponentName = path.basename(relativePath, path.extname(relativePath));
 
-    await runCommand(`git add "${relativePath}" eslint-suppressions.json`, REPO_ROOT);
+    await runCommand(`git add "${relativePath}" ${config.lint.suppressionsFile}`, REPO_ROOT);
     await runCommand(`git commit --no-verify -m "fix(${tCommitScope}): resolve TypeScript errors in ${tComponentName}" -m "Fix type errors introduced during refactoring. Updated type annotations and value mappings to match expected interfaces."`, REPO_ROOT);
 
     if (!BATCH_MODE) {
@@ -2266,7 +2196,7 @@ async function fixTestErrorsForFile(relativePath, runner = 'jest') {
   // 1. Branch Management - SKIPPED (User manages branch)
 
   // 2. Initial Test Run
-  // Using TZ="Australia/Melbourne" as per package.json patterns
+  // Using TZ from config as per package.json patterns
   let testCommand = '';
   if (runner === 'vitest') {
       testCommand = `yarn run test:vitest --run "${relativePath}"`;
@@ -2275,7 +2205,7 @@ async function fixTestErrorsForFile(relativePath, runner = 'jest') {
       // jest-haste-map scanning the full dependency graph and hitting
       // duplicate mock errors in monorepo workspaces
       const escapedPath = relativePath.replace(/[.*+?^${}()|[\]\\]/g, '\\\\$&');
-      testCommand = `TZ="Australia/Melbourne" npx jest --testPathPattern="${escapedPath}" --passWithNoTests --no-cache`;
+      testCommand = `TZ="${TZ}" npx jest --testPathPattern="${escapedPath}" --passWithNoTests --no-cache`;
   }
 
   console.log(chalk.yellow(`  Running tests: ${testCommand}`));
@@ -2358,7 +2288,7 @@ async function fixTestErrorsForFile(relativePath, runner = 'jest') {
       if (runner === 'vitest') {
           updateCommand = `yarn run test:vitest --run "${relativePath}" --update`;
       } else {
-          updateCommand = `TZ="Australia/Melbourne" npx jest --findRelatedTests "${relativePath}" --passWithNoTests --updateSnapshot`;
+          updateCommand = `TZ="${TZ}" npx jest --findRelatedTests "${relativePath}" --passWithNoTests --updateSnapshot`;
       }
       
       const updateResult = await runCommand(updateCommand, REPO_ROOT);
@@ -2508,7 +2438,7 @@ COMMON PATTERNS:
 - Return type changed (e.g., Promise wrapper added/removed)
 - Import path changed
 - Renamed export not updated everywhere
-- Date/timezone handling (this repo uses TZ="Australia/Melbourne")
+- Date/timezone handling (this repo uses TZ="${TZ}")
 - React hook dependencies changed
 - Type narrowing or guard conditions modified
 
@@ -2548,7 +2478,7 @@ TOOLS AVAILABLE:
         }, 1000);
 
         const response = await client.chat.completions.create({
-            model: "gpt-5.2-2025-12-11",
+            model: MODEL,
             messages: messages,
             tools: Object.values(tools).map(t => t.definition),
             tool_choice: "auto",
@@ -2711,7 +2641,7 @@ async function runTestFixer() {
      const initialBranch = initialBranchCheck.stdout.trim();
      if (initialBranch === MAIN_BRANCH || initialBranch === 'main') {
          const timestamp = Date.now();
-         const newBranch = `feat/auto-fix-${timestamp}`;
+         const newBranch = config.branches.prefixes.autoFix(timestamp);
          console.log(chalk.yellow(`  ⚠️ Currently on ${initialBranch}. Creating branch: ${newBranch}`));
          await runCommand(`git checkout -b "${newBranch}"`, REPO_ROOT);
      }
@@ -2772,7 +2702,7 @@ async function runTestFixer() {
      if (fs.existsSync(jestOutputPath)) fs.unlinkSync(jestOutputPath);
 
      console.log(chalk.yellow(`  Running Jest suite...`));
-     const jestCmd = `TZ="Australia/Melbourne" npx jest --maxWorkers=4 --json --outputFile="${jestOutputFile}"`;
+     const jestCmd = `TZ="${TZ}" npx jest --maxWorkers=4 --json --outputFile="${jestOutputFile}"`;
      await runCommand(jestCmd, REPO_ROOT);
 
      if (fs.existsSync(jestOutputPath)) {
@@ -2896,7 +2826,7 @@ async function runTestFixer() {
      // 2. Discover Lint Failures (Global)
      console.log(chalk.yellow(`\n  Running Global Lint Check (to find remaining errors)...`));
      // Using --compact or -f json? -f json is better for parsing
-     const lintCmd = `yarn lint:js --quiet -f json`;
+     const lintCmd = `${config.lint.quietCommand}`;
      
      // We expect this to fail if there are errors, so we ignore the "success" flag for a moment
      const lintRun = await runCommand(lintCmd, REPO_ROOT);
@@ -2995,7 +2925,7 @@ async function runTestFixer() {
 
      // 3. Prune Suppressions (Final Pass)
      console.log(chalk.yellow(`\n  Running final suppression prune...`));
-     const pruneResult = await runCommand(`yarn lint:js --prune-suppressions`, REPO_ROOT);
+     const pruneResult = await runCommand(`${config.lint.pruneCommand}`, REPO_ROOT);
      
      if (!pruneResult.success) {
          const pruneErrors = pruneResult.stdout + pruneResult.stderr;
@@ -3010,12 +2940,12 @@ async function runTestFixer() {
      }
 
      // Check if eslint-suppressions.json was modified regardless of exit code
-     const statusResult = await runCommand(`git diff --name-only eslint-suppressions.json`, REPO_ROOT);
+     const statusResult = await runCommand(`git diff --name-only ${config.lint.suppressionsFile}`, REPO_ROOT);
      const changed = statusResult.stdout.trim().length > 0;
      
      if (changed) {
          console.log(chalk.blue(`  Suppressions file changed, committing...`));
-         await runCommand(`git add eslint-suppressions.json`, REPO_ROOT);
+         await runCommand(`git add ${config.lint.suppressionsFile}`, REPO_ROOT);
          await runCommand(`git commit --no-verify -m "chore: prune obsolete eslint suppressions"`, REPO_ROOT);
          console.log(chalk.bold.green(`  ✅ Suppressions pruned and committed.`));
      } else {
@@ -3039,8 +2969,8 @@ async function runTestFixer() {
        const e2eTagsArg = process.argv.find(a => a.startsWith('--e2e-tags='));
        const e2eTagsOverride = e2eTagsArg ? e2eTagsArg.split('=')[1] : '';
        const e2eOpts = {
-         app: 'checkout',
-         tags: e2eTagsOverride || '@checkout_local',
+         app: DEFAULT_APP,
+         tags: e2eTagsOverride || config.e2e.defaultTags,
          useDocker: e2eUseDocker,
          headless: true,
          changedFiles: e2eChangedFiles,
@@ -3233,7 +3163,7 @@ async function runBatchFixer() {
         ? firstFileParts[1] : 'core';
     const firstFile = path.basename(fileList[0], path.extname(fileList[0]));
     const timestamp = Date.now();
-    const branchName = `feat/${appScope}/static-i18n-keys-${firstFile}-${timestamp}`;
+    const branchName = config.branches.prefixes.i18n(appScope, firstFile, timestamp);
     
     console.log(chalk.yellow(`  Creating branch: ${branchName}`));
     await runCommand(`git fetch origin ${MAIN_BRANCH}`, REPO_ROOT);
@@ -3256,7 +3186,7 @@ async function runBatchFixer() {
     if (fs.existsSync(jestOutputPath)) fs.unlinkSync(jestOutputPath);
 
     console.log(chalk.yellow(`\n  Running Jest suite...`));
-    const jestCmd = `TZ="Australia/Melbourne" npx jest --maxWorkers=4 --json --outputFile="${jestOutputFile}"`;
+    const jestCmd = `TZ="${TZ}" npx jest --maxWorkers=4 --json --outputFile="${jestOutputFile}"`;
     await runCommand(jestCmd, REPO_ROOT);
 
     if (fs.existsSync(jestOutputPath)) {
@@ -3378,7 +3308,7 @@ async function runBatchFixer() {
 
     // --- Prune Suppressions ---
     console.log(chalk.yellow(`\n  Running final suppression prune...`));
-    const pruneResult = await runCommand(`yarn lint:js --prune-suppressions`, REPO_ROOT);
+    const pruneResult = await runCommand(`${config.lint.pruneCommand}`, REPO_ROOT);
 
     if (!pruneResult.success) {
         const pruneErrors = pruneResult.stdout + pruneResult.stderr;
@@ -3390,7 +3320,7 @@ async function runBatchFixer() {
     }
 
     // Check if eslint-suppressions.json was modified regardless of exit code
-    const pruneStatus = await runCommand(`git diff --name-only eslint-suppressions.json`, REPO_ROOT);
+    const pruneStatus = await runCommand(`git diff --name-only ${config.lint.suppressionsFile}`, REPO_ROOT);
     if (pruneStatus.stdout.trim().length > 0) {
         console.log(chalk.blue(`  Suppressions file changed, will be included in final commit.`));
     } else {
@@ -3463,7 +3393,7 @@ async function runBatchFixer() {
         await formatChangedFiles();
         await runCommand(`git add .`, REPO_ROOT);
         await runCommand(`git checkout HEAD -- package.json yarn.lock 2>/dev/null || true`, REPO_ROOT);
-        await runCommand(`git commit --no-verify -m "feat(${appScope}): replace dynamic i18n keys with static keys" -m "Migrate dynamic translation key construction to static string literals across multiple files. This ensures all i18n keys are statically analyzable and satisfy the @afterpay/i18n-only-static-keys ESLint rule."`, REPO_ROOT);
+        await runCommand(`git commit --no-verify -m "feat(${appScope}): replace dynamic i18n keys with static keys" -m "Migrate dynamic translation key construction to static string literals across multiple files. This ensures all i18n keys are statically analyzable and satisfy the ${I18N_RULE} ESLint rule."`, REPO_ROOT);
     }
 
     // Always push the branch (individual fixers commit but don't push in batch mode)
@@ -3496,7 +3426,7 @@ async function runBatchFixer() {
     const prBody = [
         `## Summary`,
         ``,
-        `Replace dynamic i18n key construction with static string literals to satisfy the \`@afterpay/i18n-only-static-keys\` ESLint rule.`,
+        `Replace dynamic i18n key construction with static string literals to satisfy the \`${I18N_RULE}\` ESLint rule.`,
         ``,
         `All translation keys passed to \`t()\` are now statically analyzable, enabling reliable key extraction and dead-key detection.`,
         ``,
@@ -3509,14 +3439,14 @@ async function runBatchFixer() {
         `- Replaced dynamic template literal keys with static string literals`,
         `- Used declarative \`Record\` maps to enumerate all possible translation keys per enum/type`,
         `- Split ternary key selection into separate \`t()\` calls on each branch`,
-        `- Removed corresponding entries from \`eslint-suppressions.json\``,
+        `- Removed corresponding entries from \`${config.lint.suppressionsFile}\``,
         `- Preserved all existing runtime behavior — no logic changes`,
         ``,
         detailedExplanation ? detailedExplanation : '',
         detailedExplanation ? '' : null,
         `## Testing`,
         ``,
-        `- ESLint passes with no \`@afterpay/i18n-only-static-keys\` violations`,
+        `- ESLint passes with no \`${I18N_RULE}\` violations`,
         `- All existing tests pass`,
         `- TypeScript type checking passes`,
     ].filter(Boolean).join('\n') + PR_CHECKLIST;
@@ -3589,7 +3519,7 @@ async function runParallelFixer() {
     const appScope = (parts.length >= 2 && ['apps', 'libs', 'packages'].includes(parts[0]))
       ? parts[1] : 'core';
     const component = path.basename(filePath, path.extname(filePath));
-    const branchName = `feat/${appScope}/static-i18n-keys-${component}-${Date.now()}-${i}`;
+    const branchName = config.branches.prefixes.i18nBatch(appScope, component, Date.now(), i);
     const worktreeDir = path.join(worktreeBase, `w${i}-${component}`);
     return { filePath, branchName, appScope, component, worktreeDir, index: i, failed: false };
   });
@@ -3755,7 +3685,7 @@ async function runWorkerMode() {
 
     // 2. Run related Jest tests
     console.log(`\n  Running related Jest tests...`);
-    const jestCmd = `TZ="Australia/Melbourne" npx jest --findRelatedTests "${workerFile}" --json 2>/dev/null`;
+    const jestCmd = `TZ="${TZ}" npx jest --findRelatedTests "${workerFile}" --json 2>/dev/null`;
     const jestResult = await runCommand(jestCmd, REPO_ROOT);
 
     if (jestResult.stdout.includes('"testResults"')) {
@@ -3844,8 +3774,8 @@ async function runWorkerMode() {
 
     // 5. Prune suppressions
     console.log(`\n  Pruning suppressions...`);
-    await runCommand(`yarn lint:js --prune-suppressions`, REPO_ROOT);
-    const pruneStatus = await runCommand(`git diff --name-only eslint-suppressions.json`, REPO_ROOT);
+    await runCommand(`${config.lint.pruneCommand}`, REPO_ROOT);
+    const pruneStatus = await runCommand(`git diff --name-only ${config.lint.suppressionsFile}`, REPO_ROOT);
     if (pruneStatus.stdout.trim().length > 0) {
       console.log(`  Suppressions file updated.`);
     }
@@ -3861,7 +3791,7 @@ async function runWorkerMode() {
       await runCommand(`git add .`, REPO_ROOT);
       await runCommand(`git checkout HEAD -- package.json yarn.lock 2>/dev/null || true`, REPO_ROOT);
       await runCommand(
-        `git commit --no-verify -m "feat(${workerScope}): migrate ${workerComponent} to static i18n keys" -m "Replace dynamic i18n key construction with static string literals to satisfy the @afterpay/i18n-only-static-keys ESLint rule."`,
+        `git commit --no-verify -m "feat(${workerScope}): migrate ${workerComponent} to static i18n keys" -m "Replace dynamic i18n key construction with static string literals to satisfy the ${I18N_RULE} ESLint rule."`,
         REPO_ROOT
       );
     }
@@ -3904,7 +3834,7 @@ async function runWorkerMode() {
     const prBody = [
       `## Summary`,
       ``,
-      `Replace dynamic i18n key construction with static string literals to satisfy the \`@afterpay/i18n-only-static-keys\` ESLint rule.`,
+      `Replace dynamic i18n key construction with static string literals to satisfy the \`${I18N_RULE}\` ESLint rule.`,
       ``,
       `## Changes`,
       ``,
@@ -3914,7 +3844,7 @@ async function runWorkerMode() {
       ``,
       `- Replaced dynamic template literal keys with static string literals`,
       `- Used declarative Record maps to enumerate all possible translation keys`,
-      `- Removed corresponding entries from eslint-suppressions.json`,
+      `- Removed corresponding entries from ${config.lint.suppressionsFile}`,
       `- Preserved all existing runtime behavior`,
       ``,
       detailedExplanation ? detailedExplanation : '',
@@ -4237,7 +4167,7 @@ async function runLoop() {
         process.stdout.write(chalk.gray("Thinking..."));
         
         const response = await client.chat.completions.create({
-          model: "gpt-5.2-2025-12-11",
+          model: MODEL,
           messages: messages,
           tools: Object.values(tools).map(t => t.definition),
           tool_choice: "auto",

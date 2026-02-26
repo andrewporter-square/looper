@@ -6,7 +6,7 @@
 
 ## 1. What Is Looper?
 
-Looper is an autonomous AI coding agent that fixes lint violations, TypeScript type errors, failing unit tests, and E2E test failures across the Rocketship monorepo. It creates branches, applies fixes, validates them through multiple CI-equivalent checks, and opens pull requests — fully automated, end to end.
+Looper is an autonomous AI coding agent that fixes lint violations, TypeScript type errors, failing unit tests, and E2E test failures across your target monorepo. It creates branches, applies fixes, validates them through multiple CI-equivalent checks, and opens pull requests — fully automated, end to end.
 
 **Key stats:**
 - ~4,300 lines of Node.js (single-file architecture: `index.js`)
@@ -22,10 +22,10 @@ Looper is an autonomous AI coding agent that fixes lint violations, TypeScript t
 
 ## 2. The Problem
 
-Rocketship is a large TypeScript/React monorepo (Yarn workspaces). Maintaining it involves:
+Your target repo is typically a large TypeScript/React monorepo (e.g., Yarn workspaces). Maintaining it involves:
 
-- **ESLint rule migrations** — especially `@afterpay/i18n-only-static-keys`, which requires converting dynamic i18n keys (`t(\`key.${var}\`)`) into static ones using declarative mappings. Each file takes 30–90 minutes *manually* depending on complexity.
-- **Suppression file management** — `eslint-suppressions.json` must stay in sync with actual lint errors. CI rejects mismatches.
+- **ESLint rule migrations** — especially your custom i18n ESLint rule (configurable in `looper.config.js`), which requires converting dynamic i18n keys (`t(\`key.${var}\`)`) into static ones using declarative mappings. Each file takes 30–90 minutes *manually* depending on complexity.
+- **Suppression file management** — `eslint-suppressions.json` (configurable) must stay in sync with actual lint errors. CI rejects mismatches.
 - **Test churn** — lint fixes change component output (e.g., new translation keys), breaking snapshot tests, unit tests, and E2E tests.
 - **Type ripple effects** — changing an interface or enum in one file causes cascade type errors across imports.
 - **PR maintenance** — after opening a PR, CI failures and review comments require additional fix cycles.
@@ -174,7 +174,7 @@ Each has a custom system prompt with domain-specific strategies:
 - Pre-runs `eslint --prune-suppressions` to remove stale entries
 - Pre-gathers: file imports, tsconfig location, i18n research context
 - **Dynamic key tracing:** detects `t(\`key.${var}\`)` patterns, resolves the variable's TypeScript type, and provides the full enum/union type definition to the agent
-- System prompt includes pattern-specific strategies for `@afterpay/i18n-only-static-keys`, import ordering, `no-unused-vars`, etc.
+- System prompt includes pattern-specific strategies for your custom i18n ESLint rule (configurable in `looper.config.js`), import ordering, `no-unused-vars`, etc.
 
 **2. `fixTypeErrorsForFile()`**
 - Runs `npx tsc --noEmit` scoped to the file's package
@@ -255,7 +255,7 @@ eslint <files> --fix --prune-suppressions                      # fix + remove st
 eslint <files> --suppress-all                                  # add entries for remaining errors
 ```
 
-Why: Ensures `eslint-suppressions.json` stays perfectly in sync. CI runs `yarn lint:js` with `--verify-suppressions` and rejects stale or missing entries.
+Why: Ensures `eslint-suppressions.json` (configurable) stays perfectly in sync. CI runs `yarn lint:js` with `--verify-suppressions` and rejects stale or missing entries.
 
 ### Layer 3: `formatBranchFiles()` — Pre Push
 
@@ -276,7 +276,7 @@ Why: Catches formatting issues in *already-committed* code — e.g., files commi
 
 ## 7. ESLint Suppression Strategy
 
-Rocketship uses `eslint-suppressions.json` to incrementally adopt new lint rules. CI enforces that this file is in sync:
+Your repo uses `eslint-suppressions.json` (configurable) to incrementally adopt new lint rules. CI enforces that this file is in sync:
 
 **Old approach (before Looper):** Manual JSON editing — find the file's entry, remove it, fix errors, re-add remaining errors. Error-prone, especially at scale.
 
@@ -363,21 +363,21 @@ Looper auto-detects which Playwright E2E suites to run based on what files chang
 ```javascript
 const TAG_MAP = [
   { pattern: /paymentMethod|PaymentMethod|creditCard|CreditCard/i,
-    tags: ['@checkout_local_regression_payment_method'] },
+    tags: ['@app_regression_payment_method'] },
   { pattern: /\/login\/|\/auth\/|Login\./i,
-    tags: ['@checkout_local_regression_au_login'] },
+    tags: ['@app_regression_au_login'] },
   { pattern: /consumerLending|ConsumerLending|PaymentPlan/i,
-    tags: ['@checkout_local_regression_cl_us'] },
+    tags: ['@app_regression_cl_us'] },
   // ... 20+ patterns
 ];
-// Fallback: @checkout_local_smoke
+// Fallback: @app_smoke
 ```
 
 ### Docker Mode
 
 E2E tests run in Docker to match CI's environment:
 1. Check Docker is running
-2. Authenticate AWS/ECR (`saml2aws login`) for image pulls
+2. Authenticate AWS/ECR (configurable AWS auth, e.g., `saml2aws login`, `aws sso`) for image pulls
 3. Run via `make playwright-local-tests` with correct env vars
 4. Parse `playwright-report/results.json` for structured failures
 
@@ -386,7 +386,7 @@ E2E tests run in Docker to match CI's environment:
 Structured failures from Playwright JSON are fed to `fixE2EFailures()`:
 ```
 For each failure:
-  testFile: "browser/scenarios/checkout/summary.spec.ts"
+  testFile: "browser/scenarios/myapp/summary.spec.ts"
   testTitle: "displays total amount"
   error: "Expected 'A$24.00' but received 'A$0.00'"
   errorContext: <page snapshot HTML>
@@ -431,7 +431,7 @@ The agent reads the test, reads the changed source files, and fixes the source c
 
 ### PR Description Auto-Fix
 
-Rocketship CI rejects PRs with short descriptions. Looper generates detailed descriptions by:
+CI rejects PRs with short descriptions. Looper generates detailed descriptions by:
 1. Getting the full `git diff` for the branch
 2. Sending it to GPT-5.2 with a prompt: "Write a PR description explaining WHAT changed and WHY"
 3. Appending the standard PR checklist
@@ -449,7 +449,7 @@ When reviewers leave comments, `check-prs.js --fix-comments`:
 
 ## 12. Hermit Environment Management
 
-Rocketship uses Hermit for Node.js version management. Looper handles this by setting a custom `REPO_ENV`:
+If your repo uses Hermit for Node.js version management, Looper handles this by setting a custom `REPO_ENV`:
 
 ```javascript
 const REPO_ENV = {
@@ -548,7 +548,7 @@ The new approach: `eslint --prune-suppressions` and `--suppress-all` let ESLint 
 | Lint | ESLint with custom rules |
 | Formatting | Prettier + ESLint `--fix` |
 | Type Checking | TypeScript `tsc --noEmit` |
-| AWS Auth | `saml2aws` for ECR image pulls |
+| AWS Auth | Configurable AWS auth (e.g., `saml2aws`, `aws sso`) for ECR image pulls |
 
 ---
 
@@ -584,7 +584,7 @@ node index.js --auto-fix --skip-e2e   # Full pipeline without E2E
 node index.js --e2e                   # E2E test runner
 
 # E2E options
-node index.js --e2e --e2e-tags=@checkout_local_smoke
+node index.js --e2e --e2e-tags=@app_smoke
 node index.js --e2e --e2e-native     # Without Docker
 node index.js --e2e --e2e-headed     # Show browser
 node index.js --e2e --no-fix         # Don't auto-fix failures
@@ -594,7 +594,7 @@ node check-prs.js                    # List all looper PRs
 node check-prs.js --fix              # Fix CI failures (full pipeline)
 node check-prs.js --fix-comments     # Fix review comment feedback
 node check-prs.js --author @me       # Filter by author
-node check-prs.js --label checkout   # Filter by label
+node check-prs.js --label myapp      # Filter by label
 
 # Interactive
 node index.js                        # Chat agent for ad-hoc tasks
@@ -604,7 +604,7 @@ node index.js                        # Chat agent for ad-hoc tasks
 
 ```bash
 OPENAI_API_KEY=sk-...           # Required: OpenAI API key
-LOOPER_REPO_ROOT=/path/to/rocketship  # Path to local Rocketship clone
+LOOPER_REPO_ROOT=/path/to/your-repo   # Path to local repo clone
 LOOPER_CONCURRENCY=3            # Number of parallel workers
 BUILDKITE_TOKEN=bkua_...        # Buildkite API token (for CI log fetching)
 ```

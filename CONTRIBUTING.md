@@ -7,10 +7,10 @@ Thanks for your interest in contributing! This document explains how to get set 
 1. **Clone the repo** and run `npm install`
 2. **Copy `.env.example` to `.env`** and fill in:
    - `OPENAI_API_KEY` — required for all modes
-   - `LOOPER_REPO_ROOT` — path to your local Rocketship checkout
+   - `LOOPER_REPO_ROOT` — path to your target repo (or set in looper.config.js)
    - `BUILDKITE_TOKEN` — optional, enables fetching Buildkite CI build logs
 3. **Ensure `gh` CLI is authenticated**: `gh auth status`
-4. **For E2E testing**: Docker Desktop must be running, and AWS credentials configured via `saml2aws`
+4. **For E2E testing**: Docker Desktop must be running, and AWS credentials configured (see looper.config.js)
 
 ## Development Workflow
 
@@ -30,7 +30,7 @@ Looper doesn't have a formal test suite yet — validation is done by running th
 node -c index.js && node -c check-prs.js
 
 # Dry run: put a single file in list.json and run batch mode
-echo '["apps/checkout/src/page/example/Example.tsx"]' > list.json
+echo '["apps/myapp/src/page/example/Example.tsx"]' > list.json
 node index.js --batch
 
 # Full pipeline on current branch
@@ -98,8 +98,8 @@ node index.js --e2e
 - Keep PRs focused on a single change
 - Include a clear description of what changed and why
 - If your change affects the fixer agent's behavior, include before/after examples
-- Tag `@aporter` for review
+- Request a review from a maintainer
 
 ## Questions?
 
-Reach out on [#rocketship-dev-team](https://square.slack.com/archives/C033Q541WS2) or open an issue.
+Open an issue or start a discussion.

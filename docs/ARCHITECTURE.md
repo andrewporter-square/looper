@@ -2,7 +2,7 @@
 
 ## Overview
 
-Looper is an AI-powered automated code fixer that operates on the Rocketship TypeScript/React monorepo. It identifies lint violations, type errors, unit/integration test failures, and E2E test failures, then uses an LLM agent to generate and validate fixes — all within an automated pipeline that creates branches and PRs. It also monitors open PRs for CI failures and review feedback, auto-fixing them via the full pipeline.
+Looper is an AI-powered automated code fixer that operates on TypeScript/React monorepos. It identifies lint violations, type errors, unit/integration test failures, and E2E test failures, then uses an LLM agent to generate and validate fixes — all within an automated pipeline that creates branches and PRs. It also monitors open PRs for CI failures and review feedback, auto-fixing them via the full pipeline.
 
 ## System Diagram
 
@@ -70,7 +70,7 @@ Looper is an AI-powered automated code fixer that operates on the Rocketship Typ
          │                              │                    │
          ▼                              ▼                    ▼
 ┌──────────────────┐          ┌──────────────────┐  ┌──────────────┐
-│  Rocketship Repo │          │    GitHub API     │  │ Buildkite API│
+│  Target Repo     │          │    GitHub API     │  │ Buildkite API│
 │  (local clone)   │          │  PRs, checks,     │  │ Build logs,  │
 │  git worktrees   │          │  comments, runs   │  │ job state    │
 └──────────────────┘          └──────────────────┘  └──────────────┘
@@ -130,7 +130,7 @@ The fixer agent is an OpenAI function-calling loop with three tools:
 **Key design choice**: The agent has full read/write access to the repo via tools, but the orchestrator controls the git workflow. The agent never commits or pushes.
 
 Four specializations:
-- **`fixLintErrorsForFile()`** — ESLint errors. System prompt includes pattern-specific strategies for `@afterpay/i18n-only-static-keys`, `no-unused-vars`, import rules, etc.
+- **`fixLintErrorsForFile()`** — ESLint errors. System prompt includes pattern-specific strategies for custom i18n rules (configurable), `no-unused-vars`, import rules, etc.
 - **`fixTypeErrorsForFile()`** — TypeScript `tsc` errors. Traces type dependencies across files.
 - **`fixTestErrorsForFile()`** — Jest and Vitest failures. Reads test file + source file, understands assertion patterns.
 - **`fixE2EFailures()`** — Playwright E2E failures. Parses structured JSON results, correlates with source changes.
@@ -205,11 +205,11 @@ This avoids wasting AI tokens on unrelated failures.
 **Tag resolution (`resolveE2ETagsFromChanges()`):**
 - Maps changed source file paths to Playwright test tags
 - 20+ regex patterns match component/page names to regression suites
-- Falls back to `@checkout_local_smoke` if no specific match
+- Falls back to configured smoke tags if no specific match
 
 **Docker mode (default):**
 - Checks Docker is running
-- Handles AWS/ECR authentication (`saml2aws login` for image pulls)
+- Handles AWS/ECR authentication (configurable AWS auth for image pulls)
 - Runs via `yarn test:e2e:$APP --tags $TAGS`
 - Parses Playwright JSON results for structured failure data
 
@@ -280,9 +280,9 @@ The AI agent receives context from multiple sources:
 ## Operational Notes
 
 - **Rate limits**: OpenAI API calls are sequential per worker. Parallel mode with 3 workers = ~3x API usage.
-- **Worktree cleanup**: `runParallelFixer` cleans up worktrees on exit. If the process is killed, run `git worktree prune` in the Rocketship repo.
+- **Worktree cleanup**: `runParallelFixer` cleans up worktrees on exit. If the process is killed, run `git worktree prune` in the target repo.
 - **Branch naming**: `feat/{scope}/static-i18n-keys-{component}-{timestamp}-{index}` or `fix/lint-{component}-{timestamp}`
-- **Hermit env**: `REPO_ENV` prepends Rocketship's `bin/` and `node_modules/.bin/` to `PATH` so `exec()` uses Hermit-managed Node/yarn/vitest.
+- **Hermit env**: `REPO_ENV` prepends the target repo's `bin/` and `node_modules/.bin/` to `PATH` so `exec()` uses Hermit-managed Node/yarn/vitest.
 - **Context window management**: Token usage is estimated per message. Old messages are pruned when approaching the context limit.
-- **Docker E2E**: Requires Docker Desktop running + valid AWS credentials (`saml2aws`). Falls back gracefully if either is unavailable.
+- **Docker E2E**: Requires Docker Desktop running + valid AWS credentials (configured AWS auth). Falls back gracefully if either is unavailable.
 - **Safe yarn install**: `safeYarnInstall()` restores `package.json` from git if yarn modifies it (e.g., Corepack migration).

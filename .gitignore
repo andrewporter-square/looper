@@ -1,4 +1,12 @@
 node_modules/
 .env
+looper.config.js
 .pr-*-logs.txt
 .pr-body-*.md
+
+# Company-specific data/log files (not for public repo)
+*.log
+pr.json
+server-error-context.txt
+i18n-static-keys-research-MEGA.md
+deep-research-report.md
